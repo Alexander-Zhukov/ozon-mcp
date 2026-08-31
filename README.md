@@ -16,10 +16,11 @@ filters, and Ozon Card / points — over Ozon's internal `composer-api`.
 
 Ozon's Variti antibot blocks non-browser clients, so the session **bootstraps
 once** with a real headed Chromium under Xvfb (passes the challenge, harvests
-cookies + client-hint headers). Thereafter every read/write goes out over
+cookies + client-hint headers). Thereafter every read and write goes out over
 [`curl_cffi`](https://github.com/lexiforest/curl_cffi) (Chrome TLS
-impersonation) as direct HTTP — no browser per call. The browser is reused only
-for token refresh and the few DOM-rendered reads.
+impersonation) as direct HTTP — **no tool renders a page**, which is what makes
+calls take ~0.1s instead of ~15s. The browser stays only to own the profile and
+refresh the session; it is the fallback for one reading, the delivery estimate.
 
 Requirements: run from a **Russian IP** (Ozon blocks datacenter/VPN egress) and
 a persistent browser profile seeded by one interactive login.

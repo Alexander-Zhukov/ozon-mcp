@@ -38,6 +38,7 @@ from ozon_mcp.constants import (
     HARVEST_HEADERS,
     HOME_URL,
     LAUNCH_ARGS,
+    WIDGET_URL,
 )
 from ozon_mcp.settings import get_settings
 from ozon_mcp.utils.observability import BROWSER_ACTIVE, SESSION_BOOTSTRAPS, UPSTREAM_LATENCY, UPSTREAM_REQUESTS
@@ -275,6 +276,14 @@ class OzonSession:
         """
         return self._request("POST", COMPOSER_URL + quote(path, safe="/?=&"), body=body)
 
+    def widget_state(self, state_id: str, async_data: str) -> dict[str, Any]:
+        """Fill one lazily-loaded widget by naming its state.
+
+        The page ships such widgets empty; the site then posts a base64
+        descriptor of the component to this endpoint to get the real content.
+        """
+        return self._request("POST", WIDGET_URL + quote(state_id, safe=""), body={"asyncData": async_data})
+
     def action(self, action_path: str, body: object) -> dict[str, Any]:
         """POST a composer ``_action/<action_path>`` (body sent as JSON verbatim)."""
         return self._request("POST", ACTION_URL + action_path, body=body, backend="action")
@@ -289,8 +298,11 @@ class OzonSession:
 
     # -- DOM reads (need the browser) ----------------------------------------
     def page_extract(self, path: str, js: str, *, scroll: bool = False) -> Any:
-        """Navigate to ``path`` and evaluate ``js`` against the rendered DOM, used
-        for data OZON only renders client-side (e.g. delivery estimate).
+        """Navigate to ``path`` and evaluate ``js`` against the rendered DOM.
+
+        Kept only as a fallback: everything is served over HTTP now, but the
+        delivery estimate rides a layout-pinned widget endpoint, so reading the
+        rendered page is the safety net if Ozon changes that layout.
         """
         with self._lock:
             self._ensure_browser()
@@ -301,24 +313,6 @@ class OzonSession:
                 for delta in (4000, 9000, 16000):
                     self._page.mouse.wheel(0, delta)
                     self._page.wait_for_timeout(1500)
-            self._last_used = time.time()
-            return self._page.evaluate(js)
-
-    def nav_click_extract(self, path: str, click_text: str, js: str, wait_ms: int = 6000) -> Any:
-        """Navigate, click the element whose text starts with ``click_text`` (a
-        favorites tab), wait, then evaluate ``js`` — for session-bound sections.
-        """
-        with self._lock:
-            self._ensure_browser()
-            url = HOME_URL.rstrip("/") + path if path.startswith("/") else path
-            self._page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-            self._page.wait_for_timeout(6_000)
-            self._page.evaluate(
-                "(text) => { const el = [...document.querySelectorAll('a,button,span,div')]"
-                ".find(e => (e.innerText || '').trim().startsWith(text)); if (el) el.click(); }",
-                click_text,
-            )
-            self._page.wait_for_timeout(wait_ms)
             self._last_used = time.time()
             return self._page.evaluate(js)
 
