@@ -27,6 +27,56 @@ def widget(data: dict[str, Any], prefix: str) -> Any:
     return None
 
 
+def layout_widgets(data: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Every widget declared in the page layout, containers included.
+
+    The layout is a tree: containers nest their children under
+    ``placeholders[].widgets[]``, so a flat read of the top level misses most of
+    the page.
+    """
+
+    def descend(entries: Any) -> Iterator[dict[str, Any]]:
+        for entry in entries or []:
+            if not isinstance(entry, dict):
+                continue
+            yield entry
+            for placeholder in entry.get("placeholders") or []:
+                if isinstance(placeholder, dict):
+                    yield from descend(placeholder.get("widgets"))
+
+    return descend(data.get("layout"))
+
+
+def state_by_layout(data: dict[str, Any], component: str, **params: str) -> Any:
+    """The widget state whose *layout declaration* matches, by component and params.
+
+    Ozon reuses one component name for different blocks and tells them apart in
+    the layout, not in the payload: a product page declares two
+    ``webDescription`` widgets, ``descriptionMode=full`` for the description and
+    ``descriptionMode=characteristics`` for the specs table. Their order in
+    ``widgetStates`` is not stable, so resolving the declared stateId is the
+    only reliable way to get the one that was asked for.
+    """
+    states = data.get("widgetStates") or {}
+    for entry in layout_widgets(data):
+        if entry.get("component") != component:
+            continue
+        try:
+            declared = json.loads(entry.get("params") or "{}")
+        except (ValueError, TypeError):
+            declared = {}
+        if any(str(declared.get(key)) != value for key, value in params.items()):
+            continue
+        raw = states.get(entry.get("stateId"))
+        if raw is None:
+            continue
+        try:
+            return json.loads(raw) if isinstance(raw, str) else raw
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
 def widget_with(data: dict[str, Any], prefix: str, *keys: str) -> Any:
     """The instance of ``prefix`` that actually carries one of ``keys``.
 

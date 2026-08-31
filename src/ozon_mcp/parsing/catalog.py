@@ -18,7 +18,7 @@ from ozon_mcp.models.catalog import (
     Variant,
     VariantOption,
 )
-from ozon_mcp.parsing.common import IMAGE_RE, PRICE_RE, find_all, prices, widget, widget_with
+from ozon_mcp.parsing.common import IMAGE_RE, PRICE_RE, find_all, prices, state_by_layout, widget, widget_with
 
 
 def parse_tiles(data: dict[str, Any]) -> list[Tile]:
@@ -146,7 +146,11 @@ def parse_description(sku: str, data: dict[str, Any]) -> Description:
     ``richAnnotationJson`` a structured block of text nodes. Both are handled,
     since a seller's choice between them is invisible from the outside.
     """
-    state = widget_with(data, "webDescription", "richAnnotation", "richAnnotationJson") or {}
+    # The layout says which of the two webDescription widgets is the description;
+    # the payload check is only a fallback for responses without a layout.
+    state = state_by_layout(data, "webDescription", descriptionMode="full")
+    if state is None:
+        state = widget_with(data, "webDescription", "richAnnotation", "richAnnotationJson") or {}
     chunks: list[str] = []
 
     plain = state.get("richAnnotation")
