@@ -53,9 +53,7 @@ a persistent browser profile seeded by one interactive login.
 | `set_favorite` | Add/remove from favorites (gated) |
 | `list_returns` | Buyer returns |
 | `get_checkout` | The order being formed: payment options, pay-on-delivery switch, pickup point, delivery dates, points, totals |
-| `set_payment_method` | Select a payment method by `payment_type` |
-| `set_pay_after_receipt` | Toggle «Оплатить после получения» (pay on delivery for part of the order) |
-| `apply_points` | Spend N points on the order (0 clears) |
+| `configure_checkout` | Set options: payment method, points to spend, pay-on-delivery switch, pickup point (per shipment) |
 | `place_order` | **Spends money** — submit the order (gated by `OZON_ENABLE_ORDERS`) |
 | `get_finances` | Ozon Card balance and total points |
 | `get_points` | Points by type + burning + per-store seller bonuses |
@@ -162,9 +160,12 @@ make check-all   # ruff format-check + ruff lint + ty typecheck + pytest
 - **The profile must be seeded by one interactive login.** OzonID — the auth
   realm guarding checkout — keeps state a cookie snapshot cannot carry, so the
   browser runs on a persistent profile; see [Session and state](#session-and-state).
-- **Pickup-point *selection* is not implemented yet.** The current point is read
-  back by `get_checkout`, but choosing a different one goes through a lazy
-  address-book modal that is not wired up.
+- **Only saved addresses can be chosen.** `configure_checkout` switches between
+  the points already in the account's address book; adding a new one from the
+  map is not implemented.
+- **Per-shipment destinations are handled but unverified.** An order can split
+  into shipments with their own addresses; that path is covered by construction
+  and by a unit test, not against a live multi-destination order.
 - **Placing an order spends real money** and is gated separately from every
   other write, behind `OZON_ENABLE_ORDERS`.
 

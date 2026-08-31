@@ -18,6 +18,7 @@ from ozon_mcp.models.checkout import (
     DeliveryPart,
     PayAfterReceipt,
     PaymentOption,
+    PickupPoint,
     PointsOption,
     TotalRow,
     Totals,
@@ -31,6 +32,7 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 _RECIPIENT_RE = re.compile(r"^[А-ЯЁ][а-яё]+ [А-ЯЁ][а-яё]+\s+\d{6,}$")
 _DELIVERY_RE = re.compile(r"Достав(?:ка|им)\s+\d")
+_SPLIT_KEY_RE = re.compile(r"split_key=([A-Za-z0-9\-]+)")
 
 
 def _text(node: Any) -> str | None:
@@ -107,6 +109,61 @@ def parse_pay_after_receipt(state: Any) -> PayAfterReceipt:
     return PayAfterReceipt()
 
 
+def _point_number(entry: dict[str, Any]) -> str | None:
+    """The pickup point's public number; Ozon exposes it as copy-to-clipboard."""
+    for node in walk(entry):
+        action = node.get("action")
+        if isinstance(action, dict) and action.get("id") == "copyText":
+            value = (action.get("params") or {}).get("clipboardText")
+            if value:
+                return str(value)
+    return None
+
+
+def _apply_link(entry: dict[str, Any]) -> str | None:
+    for node in walk(entry):
+        link = _link(node)
+        if "apply_address_split=" in link:
+            return link
+    return None
+
+
+def parse_pickup_points(state: Any) -> list[PickupPoint]:
+    """Saved addresses from the address-book modal.
+
+    Each entry carries its own apply link; entries without one are points Ozon
+    will not ship this cart to, so they are returned as unavailable rather than
+    hidden — the caller can explain why.
+    """
+    points: list[PickupPoint] = []
+    for entry in (state.get("addresses") if isinstance(state, dict) else None) or []:
+        if not isinstance(entry, dict):
+            continue
+        texts: list[str] = [t.strip() for t in find_all(entry, "text") if isinstance(t, str) and t.strip()]
+        apply_link = _apply_link(entry)
+        points.append(
+            PickupPoint(
+                address_book_id=entry.get("addressBookId"),
+                title=_text(entry.get("title")) or (texts[0] if texts else None),
+                address=next((t for t in texts[1:] if len(t) > 12 and "хранени" not in t.lower()), None),
+                number=_point_number(entry),
+                storage=next((t for t in texts if "хранени" in t.lower()), None),
+                selected=bool(entry.get("isSelected")),
+                available=bool(entry.get("isEnabled")) and apply_link is not None,
+                note=next((t for t in texts if "не можем" in t.lower()), None),
+            )
+        )
+    return points
+
+
+def pickup_apply_link(state: Any, address_book_id: str) -> str | None:
+    """The link that switches the order to ``address_book_id``."""
+    for entry in (state.get("addresses") if isinstance(state, dict) else None) or []:
+        if isinstance(entry, dict) and entry.get("addressBookId") == address_book_id:
+            return _apply_link(entry)
+    return None
+
+
 def parse_delivery(state: Any) -> Delivery:
     mode, change_link = None, None
     for node in walk(state):
@@ -130,6 +187,21 @@ def parse_delivery(state: Any) -> Delivery:
         recipient=next((t for t in texts if _RECIPIENT_RE.match(t.strip())), None),
         change_link=change_link,
     )
+
+
+def parse_deliveries(data: dict[str, Any]) -> list[Delivery]:
+    """One entry per destination widget, each tagged with the shipments it covers."""
+    deliveries: list[Delivery] = []
+    for state in widgets_all(data, "rfbsAddressInfo"):
+        delivery = parse_delivery(state)
+        keys: list[str] = []
+        for node in walk(state):
+            for key in _SPLIT_KEY_RE.findall(_link(node)):
+                if key not in keys:
+                    keys.append(key)
+        delivery.split_keys = keys
+        deliveries.append(delivery)
+    return deliveries
 
 
 def parse_parts(data: dict[str, Any]) -> list[DeliveryPart]:
@@ -211,7 +283,7 @@ def parse_checkout(data: dict[str, Any]) -> Checkout:
         payment_options=parse_payment_options(payment),
         pay_after_receipt=parse_pay_after_receipt(payment),
         installment=_payment_note(payment, "Рассрочка"),
-        delivery=parse_delivery(widget(data, "rfbsAddressInfo")),
+        deliveries=parse_deliveries(data),
         parts=parse_parts(data),
         points=parse_points(widget(data, "premiumPointsToggle")),
         totals=parse_totals(total),
