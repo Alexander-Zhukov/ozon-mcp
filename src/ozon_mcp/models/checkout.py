@@ -112,3 +112,33 @@ class Checkout(OzonModel):
     points: list[PointsOption] = Field(default_factory=list)
     totals: Totals = Field(default_factory=Totals)
     place_order_action: str | None = None
+
+
+class OrderPlaced(OzonModel):
+    """Result of a submitted order, once Ozon has actually created it."""
+
+    order_number: str | None = None
+    total: str | None = None
+    link: str | None = None
+
+
+class CancelReason(OzonModel):
+    """One reason Ozon offers for cancelling.
+
+    ``needs_comment`` marks the catch-all option, which Ozon refuses without a
+    free-text explanation.
+    """
+
+    reason_id: str
+    label: str | None = None
+    needs_comment: bool = False
+
+
+class OrderCancelled(OzonModel):
+    """Result of a cancellation, with what Ozon reported back."""
+
+    order_number: str
+    cancelled: bool = False
+    reason_id: str | None = None
+    returned_to_cart: bool = False
+    detail: str | None = None

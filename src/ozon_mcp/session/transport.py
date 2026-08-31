@@ -95,6 +95,7 @@ class OzonSession:
             return
         fresh = not (self._profile / "Default").exists()
         self._profile.mkdir(parents=True, exist_ok=True)
+        self._clear_stale_lock()
         self._playwright = sync_playwright().start()
         self._context = self._playwright.chromium.launch_persistent_context(
             user_data_dir=str(self._profile),
@@ -113,6 +114,19 @@ class OzonSession:
         if _ANTIBOT.search((self._page.title() or "").lower()):
             self._close_browser()
             raise RuntimeError("antibot challenge not passed")
+
+    def _clear_stale_lock(self) -> None:
+        """Drop a Chromium profile lock left by a killed process.
+
+        A profile may only be open once, and Chromium refuses to start if the
+        lock is present — including when the owner died without cleaning up,
+        which is exactly what happens when a container is stopped mid-call.
+        """
+        for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            lock = self._profile / name
+            if lock.is_symlink() or lock.exists():
+                lock.unlink(missing_ok=True)
+                logger.info("removed stale profile lock %s", name)
 
     def _seed_from_state(self) -> None:
         """Import a legacy ``state.json`` into a brand-new profile.

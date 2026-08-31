@@ -69,6 +69,8 @@ ignore = [
 "src/ozon_mcp/server.py" = ["TC001", "TC002", "TC003", "FBT001", "FBT002"]
 # Same reason: the checkout service mirrors the tool signature.
 "src/ozon_mcp/services/checkout.py" = ["FBT001"]
+# Same reason: cancel_order mirrors the tool signature.
+"src/ozon_mcp/services/orders.py" = ["FBT001", "FBT002"]
 # Binding all interfaces is the point: the container's port mapping decides what
 # is actually reachable.
 "src/ozon_mcp/settings.py" = ["S104"]

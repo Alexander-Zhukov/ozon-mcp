@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from ozon_mcp.dependencies import get_session
 from ozon_mcp.errors import WritesDisabledError
+from ozon_mcp.models.lists import ListRef
 from ozon_mcp.parsing import catalog as catalog_parse
 from ozon_mcp.parsing.common import PRICE_RE, find_all, widget
 from ozon_mcp.parsing.lists import parse_list_page, parse_lists
@@ -22,7 +23,7 @@ from ozon_mcp.settings import get_settings
 
 if TYPE_CHECKING:
     from ozon_mcp.models.catalog import Tile
-    from ozon_mcp.models.lists import ListId, ListRef, PriceDiff
+    from ozon_mcp.models.lists import PriceDiff
 
 _LISTS_PATH = "/my/favorites/lists"
 
@@ -41,11 +42,6 @@ def list_favorites(page: int = 1) -> list[Tile]:
     return catalog_parse.parse_tiles(get_session().fetch(f"/my/favorites?page={page}"))
 
 
-def favorites_price_snapshot() -> dict[str, int | None]:
-    tiles = catalog_parse.parse_tiles(get_session().fetch("/my/favorites"))
-    return {tile.sku: _price_number(tile.price) for tile in tiles if tile.sku}
-
-
 def check_favorite_price_drops() -> PriceDiff:
     tiles = catalog_parse.parse_tiles(get_session().fetch("/my/favorites"))
     prices = {tile.sku: _price_number(tile.price) or 0 for tile in tiles if tile.sku}
@@ -53,18 +49,30 @@ def check_favorite_price_drops() -> PriceDiff:
     return monitoring.record(prices, titles)
 
 
-def list_collections() -> list[ListRef]:
-    return parse_list_page(get_session().fetch(_LISTS_PATH), wishlists=False)
+def get_lists(sku: str | None = None) -> list[ListRef]:
+    """Collections and wishlists in one answer.
 
-
-def list_wishlists() -> list[ListRef]:
-    return parse_list_page(get_session().fetch(_LISTS_PATH), wishlists=True)
-
-
-def get_lists(sku: str) -> list[ListId]:
+    Without ``sku`` this is the lists page: names, kinds and counts. With a
+    ``sku`` it is the membership modal for that product, which is the only place
+    Ozon exposes list **ids** — and an id is what changing membership needs.
+    """
+    session = get_session()
+    if sku is None:
+        page = session.fetch(_LISTS_PATH)
+        collections = [ref.model_copy(update={"kind": "collection"}) for ref in parse_list_page(page, wishlists=False)]
+        wishlists = [ref.model_copy(update={"kind": "wishlist"}) for ref in parse_list_page(page, wishlists=True)]
+        return collections + wishlists
     sku_match = re.search(r"(\d{6,})", str(sku))
     identifier = sku_match.group(1) if sku_match else sku
-    return parse_lists(get_session().fetch(f"/modal/favoritesListsSelect?sku={identifier}", backend="entrypoint"))
+    entries = parse_lists(session.fetch(f"/modal/favoritesListsSelect?sku={identifier}", backend="entrypoint"))
+    return [ListRef(name=entry.name, list_id=entry.id) for entry in entries]
+
+
+def set_list_membership(sku: str, list_id: int, *, add: bool = True) -> dict[str, Any]:
+    """Put a product into a collection/wishlist, or take it out."""
+    _require_writes()
+    path = "v2/favoriteListAdd" if add else "v2/favoriteListRemove"
+    return get_session().action(path, {"skus": [int(sku)], "id": int(list_id)})
 
 
 def list_returns() -> dict[str, list[str]]:
@@ -77,13 +85,3 @@ def set_favorite(sku: str, *, add: bool = True) -> dict[str, Any]:
     _require_writes()
     path = "v2/favoriteBatchAddItems" if add else "v2/favoriteBatchDeleteItems"
     return get_session().action(path, {"skus": [int(sku)]})
-
-
-def add_to_list(sku: str, list_id: int) -> dict[str, Any]:
-    _require_writes()
-    return get_session().action("v2/favoriteListAdd", {"skus": [int(sku)], "id": int(list_id)})
-
-
-def remove_from_list(sku: str, list_id: int) -> dict[str, Any]:
-    _require_writes()
-    return get_session().action("v2/favoriteListRemove", {"skus": [int(sku)], "id": int(list_id)})

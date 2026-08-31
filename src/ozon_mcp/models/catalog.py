@@ -37,16 +37,6 @@ class Characteristic(OzonModel):
     value: str = ""
 
 
-class ProductCard(OzonModel):
-    title: str | None = None
-    sku: str | None = None
-    price: str | None = None
-    price_list: list[str] = []
-    variants: list[Variant] = []
-    characteristics: list[Characteristic] = []
-    photos: list[str] = []
-
-
 class Review(OzonModel):
     author: str | None = None
     score: int | None = None
@@ -60,6 +50,25 @@ class Reviews(OzonModel):
     count: int = 0
     photos: list[str] = []
     reviews: list[Review] = []
+
+
+class ProductCard(OzonModel):
+    """Everything on a product card.
+
+    ``description`` and ``reviews`` come from separate endpoints and are filled
+    only when asked for, so the common case stays one cheap request.
+    """
+
+    title: str | None = None
+    sku: str | None = None
+    price: str | None = None
+    price_list: list[str] = []
+    variants: list[Variant] = []
+    characteristics: list[Characteristic] = []
+    photos: list[str] = []
+    description: str | None = None
+    description_images: list[str] = []
+    reviews: Reviews | None = None
 
 
 class Description(OzonModel):

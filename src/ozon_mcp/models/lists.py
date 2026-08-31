@@ -6,11 +6,18 @@ from ozon_mcp.models.base import OzonModel
 
 
 class ListRef(OzonModel):
-    """A collection (подборка) or wishlist (вишлист): name + item count."""
+    """A collection (подборка) or wishlist (вишлист).
+
+    ``list_id`` is only known when the list is read in the context of a product,
+    because Ozon exposes ids on the membership modal rather than the lists page;
+    it is what ``set_list_membership`` needs.
+    """
 
     name: str | None = None
+    kind: str | None = None
     items: int | None = None
     saves: int | None = None
+    list_id: int | None = None
 
 
 class ListId(OzonModel):

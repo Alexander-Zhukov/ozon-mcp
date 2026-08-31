@@ -27,6 +27,21 @@ def widget(data: dict[str, Any], prefix: str) -> Any:
     return None
 
 
+def widget_with(data: dict[str, Any], prefix: str, *keys: str) -> Any:
+    """The instance of ``prefix`` that actually carries one of ``keys``.
+
+    A page can ship several widgets under the same name with different payloads
+    — a product page has two ``webDescription`` widgets, one holding the
+    description and one holding characteristics — and their order in the
+    response is not stable. Picking the first match therefore returns the wrong
+    one at random; picking by content does not.
+    """
+    for state in widgets_all(data, prefix):
+        if isinstance(state, dict) and any(state.get(key) for key in keys):
+            return state
+    return None
+
+
 def widgets_all(data: dict[str, Any], prefix: str) -> list[Any]:
     """Parsed states of every widget whose key starts with ``prefix`` (e.g. each
     cartSplit — the cart is split across «доступны»/«недоступны»).
