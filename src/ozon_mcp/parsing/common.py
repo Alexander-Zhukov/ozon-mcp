@@ -51,6 +51,13 @@ def _walk(node: Any) -> Iterator[dict[str, Any]]:
             yield from _walk(value)
 
 
+def walk(node: Any) -> Iterator[dict[str, Any]]:
+    """Every dict inside a nested structure, for callers that need whole nodes
+    (an action link plus the title next to it) rather than one key.
+    """
+    return _walk(node)
+
+
 def find_all(node: Any, key: str) -> list[Any]:
     """Every value stored under ``key`` anywhere in a nested structure."""
     return [d[key] for d in _walk(node) if isinstance(d, dict) and key in d]

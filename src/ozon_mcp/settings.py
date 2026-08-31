@@ -16,14 +16,21 @@ class OzonSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="OZON_", extra="ignore")
 
+    profile_dir: Path = Path("/data/profile")
+    """Persistent Chromium profile holding the session, including OzonID state
+    that a storageState snapshot cannot carry (IndexedDB, device trust)."""
+
     state_path: Path = Path("/data/state.json")
-    """Saved Playwright storageState with the authenticated session."""
+    """Legacy storageState, imported once to seed a brand-new profile."""
 
     impersonate: str = "chrome124"
     """curl_cffi TLS-impersonation profile for direct HTTP requests."""
 
     enable_writes: bool = False
     """Allow account-mutating tools (cart / favorites / lists)."""
+
+    enable_orders: bool = False
+    """Allow place_order. Separate from enable_writes: this one spends money."""
 
     monitor_store: Path = Path("/data/price_history.json")
     """Where favorites price-monitoring snapshots are persisted."""
