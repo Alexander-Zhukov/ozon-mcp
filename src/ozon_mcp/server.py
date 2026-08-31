@@ -267,45 +267,48 @@ async def get_checkout() -> Checkout:
 
 @mcp.tool()
 async def configure_checkout(
-    payment_type: int | None = None,
+    payment: str | None = None,
     points: int | None = None,
     pay_after_receipt: bool | None = None,
-    pickup_point_id: str | None = None,
+    pickup_point: str | None = None,
     split_key: str | None = None,
 ) -> Checkout:
     """Set checkout options and return the recomputed order. Omit an argument to
-    leave that option alone; all of them come from get_checkout().
-    payment_type: from payment_options — 1626 (СБП), 2044 (SberPay / saved
-      cards), 3 (new card), 22 (YooMoney). Saved cards share 2044.
+    leave that option alone; everything you can pass comes from get_checkout().
+    payment: a word, a masked card or the raw id — "СБП", "SberPay", "новой
+      картой", "**5898", or 1626 / 2044 / 3 / 22.
     points: how many Ozon points to spend; 0 spends none. Allowed amounts are in
       the `points` field — Ozon caps what it accepts.
     pay_after_receipt: true/false for «Оплатить после получения» (pay on
       delivery for part of the order); only if pay_after_receipt.available.
-    pickup_point_id: address_book_id of an entry in deliveries[].pickup_points
-      where available is true. Unavailable points carry the reason in `note`.
+    pickup_point: the point number ("№1449460" or "1449460"), a piece of its
+      address ("Данилова"), or the address_book_id. Must be one whose
+      `available` is true; unavailable ones carry Ozon's reason in `note`.
     split_key: which shipment to retarget, from deliveries[].split_keys. Only
       needed when the order has more than one destination — then it is required,
       since moving the wrong parcel is not something to guess at.
     """
     return await run_blocking(
         lambda: checkout.configure_checkout(
-            payment_type=payment_type,
+            payment=payment,
             points=points,
             pay_after_receipt=pay_after_receipt,
-            pickup_point_id=pickup_point_id,
+            pickup_point=pickup_point,
             split_key=split_key,
         )
     )
 
 
 @mcp.tool()
-async def place_order() -> dict[str, Any]:
+async def place_order(confirm_total: str) -> dict[str, Any]:
     """[GATED — SPENDS MONEY] Submit the order that get_checkout() describes.
+    confirm_total must equal get_checkout().totals.total (e.g. "12 648 ₽
+    сегодня"); the call is refused if Ozon has since recalculated the order, so
+    read get_checkout() immediately before calling and show the user that total.
     Disabled unless OZON_ENABLE_ORDERS=1, separately from OZON_ENABLE_WRITES.
-    Irreversible from here: cancelling afterwards is done in Ozon itself. Always
-    read get_checkout() and confirm the total with the user before calling this.
+    Irreversible from here: cancelling afterwards is done in Ozon itself.
     """
-    return await run_blocking(checkout.place_order)
+    return await run_blocking(lambda: checkout.place_order(confirm_total))
 
 
 # ── finance ──────────────────────────────────────────────────────────────────

@@ -273,19 +273,29 @@ def parse_checkout(data: dict[str, Any]) -> Checkout:
     payment = widget(data, "paymentInfoV2")
     total = widget(data, "total")
     if payment is None and total is None:
-        return Checkout(available=False, reason="checkout page has no order (empty cart or auth required)")
+        return Checkout(available=False, reason="checkout page did not load (empty cart or auth required)")
+    payment_options = parse_payment_options(payment)
+    deliveries = parse_deliveries(data)
+    totals = parse_totals(total)
+    # The page still renders its shell when nothing in the cart is ticked. Saying
+    # "available" then would hand the caller an empty order; name the fix instead.
+    if not payment_options and not deliveries and not totals.total:
+        return Checkout(
+            available=False,
+            reason="no cart items are selected for this order — tick them in the cart first",
+        )
     create_action = next(
         (_link(node) for node in walk(total or {}) if "createOrder" in _link(node)),
         None,
     )
     return Checkout(
         available=True,
-        payment_options=parse_payment_options(payment),
+        payment_options=payment_options,
         pay_after_receipt=parse_pay_after_receipt(payment),
         installment=_payment_note(payment, "Рассрочка"),
-        deliveries=parse_deliveries(data),
+        deliveries=deliveries,
         parts=parse_parts(data),
         points=parse_points(widget(data, "premiumPointsToggle")),
-        totals=parse_totals(total),
+        totals=totals,
         place_order_action=create_action,
     )
