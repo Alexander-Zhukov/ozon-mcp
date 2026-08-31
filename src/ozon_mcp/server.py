@@ -166,6 +166,17 @@ async def get_cart() -> Cart:
 
 
 @mcp.tool()
+async def select_cart_items(skus: list[str] | None = None, mode: str = "only") -> Cart:
+    """[GATED] Choose which cart items make up the order — this is what composes
+    a checkout; get_checkout() is empty until something is selected.
+    mode: only (order exactly these, unticking the rest) | add | remove |
+    all (every item) | none (clear the selection).
+    skus are `id` values from get_cart(); required for only/add/remove.
+    """
+    return await run_blocking(lambda: cart.select_cart_items(skus, mode))
+
+
+@mcp.tool()
 async def add_to_cart(sku: str, quantity: int = 1) -> dict[str, Any]:
     """[GATED] Add a product to the cart. For apparel pass the concrete variant
     SKU (the base SKU won't add without a chosen size).

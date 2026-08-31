@@ -266,6 +266,15 @@ class OzonSession:
         base = ENTRYPOINT_URL if backend == "entrypoint" else COMPOSER_URL
         return self._request("GET", base + quote(path, safe="/?=&"), backend=backend)
 
+    def post_page(self, path: str, body: object) -> dict[str, Any]:
+        """POST a page-level command and get the refreshed page back.
+
+        Some controls (the cart checkboxes) are not ``_action`` endpoints: the
+        site posts a command to the page's own JSON URL and re-renders from the
+        response.
+        """
+        return self._request("POST", COMPOSER_URL + quote(path, safe="/?=&"), body=body)
+
     def action(self, action_path: str, body: object) -> dict[str, Any]:
         """POST a composer ``_action/<action_path>`` (body sent as JSON verbatim)."""
         return self._request("POST", ACTION_URL + action_path, body=body, backend="action")
