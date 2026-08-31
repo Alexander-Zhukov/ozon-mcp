@@ -28,12 +28,19 @@ class DeliveryPart(OzonModel):
 
 
 class Delivery(OzonModel):
-    """Where the order goes: mode, pickup address, recipient."""
+    """One destination of the order.
+
+    An order can be split into several shipments, and Ozon may let each one go
+    to its own address — so destinations are a list, and ``split_keys`` says
+    which shipments this one covers.
+    """
 
     mode: str | None = None
     address: str | None = None
     storage: str | None = None
     recipient: str | None = None
+    split_keys: list[str] = Field(default_factory=list)
+    pickup_points: list[PickupPoint] = Field(default_factory=list)
     change_link: str | None = None
 
 
@@ -44,6 +51,23 @@ class PointsOption(OzonModel):
     amount: int | None = None
     selected: bool = False
     apply_link: str | None = None
+
+
+class PickupPoint(OzonModel):
+    """A saved delivery address / pickup point offered for this order.
+
+    ``available`` is false for points Ozon cannot ship this cart to; those carry
+    the reason in ``note`` and cannot be selected.
+    """
+
+    address_book_id: str | None = None
+    title: str | None = None
+    address: str | None = None
+    number: str | None = None
+    storage: str | None = None
+    selected: bool = False
+    available: bool = False
+    note: str | None = None
 
 
 class PayAfterReceipt(OzonModel):
@@ -83,7 +107,7 @@ class Checkout(OzonModel):
     payment_options: list[PaymentOption] = Field(default_factory=list)
     pay_after_receipt: PayAfterReceipt = Field(default_factory=PayAfterReceipt)
     installment: str | None = None
-    delivery: Delivery | None = None
+    deliveries: list[Delivery] = Field(default_factory=list)
     parts: list[DeliveryPart] = Field(default_factory=list)
     points: list[PointsOption] = Field(default_factory=list)
     totals: Totals = Field(default_factory=Totals)

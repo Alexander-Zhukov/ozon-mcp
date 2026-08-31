@@ -253,10 +253,12 @@ async def remove_from_list(sku: str, list_id: int) -> dict[str, Any]:
 # ── checkout ─────────────────────────────────────────────────────────────────
 @mcp.tool()
 async def get_checkout() -> Checkout:
-    """The order being formed from the cart: payment options (each with the
-    payment_type to pass to set_payment_method), whether part of it can be paid
-    on delivery, the pickup point / courier mode and recipient, per-shipment
-    delivery dates, points choices and the money breakdown.
+    """The order being formed from the cart, with every option that can be
+    changed: payment methods (each with its payment_type), the pay-on-delivery
+    switch, one entry per destination in `deliveries` (each with its shipments
+    in split_keys and its selectable pickup_points), the per-shipment delivery
+    dates, points choices and the money breakdown.
+    Change any of it with configure_checkout; submit with place_order.
     Requires an intact OzonID login; returns available=false with a reason if the
     cart is empty or checkout is not reachable.
     """
@@ -264,34 +266,36 @@ async def get_checkout() -> Checkout:
 
 
 @mcp.tool()
-async def set_payment_method(payment_type: int) -> Checkout:
-    """Select a payment method and return the recomputed checkout.
-    payment_type comes from get_checkout().payment_options — e.g. 1626 (СБП /
-    fast payment), 2044 (SberPay and saved cards), 3 (new card), 22 (YooMoney).
-    Saved cards share type 2044 and differ only by their masked label.
-    Paying on delivery is not a selectable type: Ozon derives it from the cart
-    and reports it in get_checkout().pay_after_receipt.
+async def configure_checkout(
+    payment_type: int | None = None,
+    points: int | None = None,
+    pay_after_receipt: bool | None = None,
+    pickup_point_id: str | None = None,
+    split_key: str | None = None,
+) -> Checkout:
+    """Set checkout options and return the recomputed order. Omit an argument to
+    leave that option alone; all of them come from get_checkout().
+    payment_type: from payment_options — 1626 (СБП), 2044 (SberPay / saved
+      cards), 3 (new card), 22 (YooMoney). Saved cards share 2044.
+    points: how many Ozon points to spend; 0 spends none. Allowed amounts are in
+      the `points` field — Ozon caps what it accepts.
+    pay_after_receipt: true/false for «Оплатить после получения» (pay on
+      delivery for part of the order); only if pay_after_receipt.available.
+    pickup_point_id: address_book_id of an entry in deliveries[].pickup_points
+      where available is true. Unavailable points carry the reason in `note`.
+    split_key: which shipment to retarget, from deliveries[].split_keys. Only
+      needed when the order has more than one destination — then it is required,
+      since moving the wrong parcel is not something to guess at.
     """
-    return await run_blocking(lambda: checkout.set_payment_method(payment_type))
-
-
-@mcp.tool()
-async def apply_points(amount: int) -> Checkout:
-    """Spend `amount` Ozon points on the current order; 0 clears the deduction.
-    Allowed values come from get_checkout().points (Ozon caps what it will take).
-    """
-    return await run_blocking(lambda: checkout.apply_points(amount))
-
-
-@mcp.tool()
-async def set_pay_after_receipt(enabled: bool) -> Checkout:
-    """Turn Ozon's "Оплатить после получения" (pay on delivery for part of the
-    order) on or off, returning the recomputed checkout.
-    Only meaningful when get_checkout().pay_after_receipt.available is true —
-    Ozon offers it per cart. When on, part of the total may still be prepaid;
-    see pay_after_receipt.prepayment.
-    """
-    return await run_blocking(lambda: checkout.set_pay_after_receipt(enabled=enabled))
+    return await run_blocking(
+        lambda: checkout.configure_checkout(
+            payment_type=payment_type,
+            points=points,
+            pay_after_receipt=pay_after_receipt,
+            pickup_point_id=pickup_point_id,
+            split_key=split_key,
+        )
+    )
 
 
 @mcp.tool()
