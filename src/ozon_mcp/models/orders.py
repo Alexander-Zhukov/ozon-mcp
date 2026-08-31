@@ -26,8 +26,11 @@ class Order(OzonModel):
 
 
 class OrderProduct(OzonModel):
-    """A product resolved from an order-detail page."""
+    """A product as it appears in an order."""
 
     sku: str
     title: str | None = None
+    price: str | None = None
+    variant: str | None = None
+    seller: str | None = None
     url: str | None = None
