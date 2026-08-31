@@ -5,12 +5,11 @@ from __future__ import annotations
 import base64
 import datetime
 import json
-import operator
 import re
 from typing import Any, Final
 
 from ozon_mcp.models.orders import Order, OrderProduct, OrderThumbnail
-from ozon_mcp.parsing.common import find_all, prices, walk, widget, widgets_all
+from ozon_mcp.parsing.common import find_all, prices, widget, widgets_all
 
 _RU_MONTHS: Final = {
     "январ": 1,
@@ -137,38 +136,59 @@ _NOT_A_TITLE_RE = re.compile(
 )
 
 
+def _atom(value: Any) -> str | None:
+    """Text of a value that may be a plain string or a ``{"text": …}`` atom."""
+    if isinstance(value, str):
+        return str(value).strip() or None
+    if isinstance(value, dict):
+        text = value.get("text")
+        if isinstance(text, str):
+            return str(text).strip() or None
+    return None
+
+
 def parse_order_products(data: dict[str, Any]) -> list[OrderProduct]:
-    """Products of an order-details page.
+    """Products of an order-details page, read from their own fields.
 
-    They live in the shipmentWidget instances — one per parcel — so the page's
-    recommendation grids are skipped by only reading those.
-
-    The sku is authoritative. The title is **best-effort**: a product's name is
-    a sibling of its link rather than a child, and the page is dense with
-    statuses, tracking sentences, cancellation reasons and seller names, none of
-    which can be told from a product name by shape alone. The tightest node
-    still containing exactly one product is used as that product's card, with
-    the obvious service phrases filtered out — good enough to recognise an item,
-    not something to display verbatim. For a reliable name, resolve the sku with
-    product_details.
+    The page nests them as ``shipmentWidget.items[].sellers[].products[]`` — one
+    shipmentWidget per parcel, grouped by seller — and each product carries its
+    name, price, chosen variant and a link whose action id *is* the sku. Reading
+    that structure avoids guessing: the page also renders statuses, tracking
+    sentences and seller names that no text-shape heuristic can tell from a
+    product name.
     """
-    products: dict[str, OrderProduct] = {}
+    products: list[OrderProduct] = []
+    seen: set[str] = set()
     for state in widgets_all(data, "shipmentWidget"):
-        cards: list[tuple[int, str, str | None]] = []
-        for node in walk(state):
-            blob = json.dumps(node, ensure_ascii=False)
-            skus = set(_PRODUCT_LINK_RE.findall(blob))
-            if len(skus) != 1:
+        for item in state.get("items") or []:
+            if not isinstance(item, dict):
                 continue
-            titles = [
-                text.strip()
-                for text in find_all(node, "text")
-                if isinstance(text, str) and 15 < len(text.strip()) < 200 and not _NOT_A_TITLE_RE.match(text.strip())
-            ]
-            cards.append((len(blob), skus.pop(), max(titles, key=len, default=None)))
-        # Tightest wrapper first, so a product's own card wins over its section.
-        for _, sku, title in sorted(cards, key=operator.itemgetter(0)):
-            existing = products.get(sku)
-            if existing is None or (existing.title is None and title is not None):
-                products[sku] = OrderProduct(sku=sku, title=title, url=f"https://www.ozon.ru/product/{sku}/")
-    return list(products.values())
+            for seller in item.get("sellers") or []:
+                if not isinstance(seller, dict):
+                    continue
+                seller_name = _atom(seller.get("name"))
+                for product in seller.get("products") or []:
+                    if not isinstance(product, dict):
+                        continue
+                    title = product.get("title") or {}
+                    action = ((title.get("common") or {}).get("action")) or {}
+                    sku = str(action.get("id") or "")
+                    if not sku:
+                        match = _PRODUCT_LINK_RE.search(str(action.get("link") or ""))
+                        sku = match.group(1) if match else ""
+                    if not sku or sku in seen:
+                        continue
+                    seen.add(sku)
+                    price_texts = (product.get("price") or {}).get("price") or []
+                    attributes = product.get("attributes") or []
+                    products.append(
+                        OrderProduct(
+                            sku=sku,
+                            title=_atom(title.get("name")),
+                            price=next((_atom(entry) for entry in price_texts if _atom(entry)), None),
+                            variant=next((_atom(entry) for entry in attributes if _atom(entry)), None),
+                            seller=seller_name,
+                            url=f"https://www.ozon.ru/product/{sku}/",
+                        )
+                    )
+    return products

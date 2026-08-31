@@ -31,7 +31,7 @@ a persistent browser profile seeded by one interactive login.
 |---|---|
 | `list_orders` | Orders (active / completed archive / all) with status, ETA, date, totals, thumbnails |
 | `orders_by_date` | Completed orders within an ISO date range |
-| `order_products` | SKUs of one order (order → product card) |
+| `order_products` | Items of one order: sku, title, price paid, variant, seller |
 | `list_purchases` | Full purchase history (sorted by date / price) |
 | `search_purchases` | Fast server-side search within purchases |
 | `search` | Storefront search with sort and facet filters |
