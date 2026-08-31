@@ -1,3 +1,5 @@
+***English** · [Русский](README.ru.md)*
+
 # Ozon MCP
 
 [Model Context Protocol](https://modelcontextprotocol.io/) server for the
