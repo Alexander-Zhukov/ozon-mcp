@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import re
+from typing import TYPE_CHECKING
 
-from ozon_mcp.constants import PURCHASE_SORTS, PURCHASES_LIST_ID, SEARCH_SORTS
+from ozon_mcp.constants import (
+    PURCHASE_SORTS,
+    PURCHASES_LIST_ID,
+    SEARCH_SORTS,
+    WEB_DELIVERY_CI,
+    WEB_DELIVERY_STATE_ID,
+)
 from ozon_mcp.dependencies import get_session
 from ozon_mcp.models.catalog import (
     Cheaper,
@@ -14,22 +23,14 @@ from ozon_mcp.models.catalog import (
     SearchFilter,
     Tile,
 )
-from ozon_mcp.models.orders import OrderProduct
 from ozon_mcp.parsing import catalog as parse
 from ozon_mcp.parsing.common import next_page
+from ozon_mcp.parsing.orders import order_numbers_from_link, parse_order_products
 
-_ORDER_PRODUCTS_JS = r"""() => {
-  const out = []; const seen = new Set();
-  for (const a of document.querySelectorAll('a[href*="/product/"]')) {
-    const t = (a.innerText || '').replace(/\s+/g, ' ').trim();
-    const m = (a.getAttribute('href') || '').match(/-(\d{6,})\//);
-    const sku = m ? m[1] : null;
-    if (sku && !seen.has(sku)) { seen.add(sku);
-      out.push({sku, title: t.slice(0, 70) || null,
-                url: 'https://www.ozon.ru/product/' + sku + '/'}); }
-  }
-  return out.slice(0, 60);
-}"""
+if TYPE_CHECKING:
+    from ozon_mcp.models.orders import OrderProduct
+
+_ORDER_NUMBER_RE = re.compile(r"\d{6,}-\d{3,}")
 
 _DELIVERY_JS = r"""() => {
   const m = (document.body.innerText || '').match(
@@ -104,9 +105,21 @@ def get_description(sku_or_url: str) -> Description:
 
 
 def delivery_estimate(sku_or_url: str) -> dict[str, str | None]:
+    """Delivery estimate for a product, relative to the account's address.
+
+    Served by the per-widget endpoint, which is ~100x faster than rendering the
+    page. That endpoint is pinned to Ozon's current layout, so if it stops
+    answering we read the rendered page instead rather than returning nothing.
+    """
     sku = _sku(sku_or_url)
+    async_data = base64.b64encode(
+        json.dumps({"ci": WEB_DELIVERY_CI, "url": f"/product/{sku}/"}, ensure_ascii=False).encode()
+    ).decode()
+    state = get_session().widget_state(WEB_DELIVERY_STATE_ID, async_data).get("state")
+    if state:
+        return {"sku": sku, **parse.parse_delivery_widget(state)}
     delivery = get_session().page_extract(f"/product/{sku}/", _DELIVERY_JS)
-    return {"sku": sku, "delivery": delivery}
+    return {"sku": sku, "delivery": delivery, "address": None, "source": None}
 
 
 def find_cheaper(sku_or_url: str, limit: int = 10) -> Cheaper:
@@ -120,10 +133,23 @@ def find_cheaper(sku_or_url: str, limit: int = 10) -> Cheaper:
     return Cheaper(base={"title": product.title, "price": product.price}, cheaper=cheaper[:limit])
 
 
-def order_products(order_detail_link: str) -> list[OrderProduct]:
-    link = order_detail_link if order_detail_link.startswith("/") else "/" + order_detail_link
-    raw = get_session().page_extract(link, _ORDER_PRODUCTS_JS)
-    return [OrderProduct.model_validate(item) for item in raw or []]
+def order_products(order: str) -> list[OrderProduct]:
+    """Products of an order, over HTTP.
+
+    Accepts either an order number ("44563249-0833") or the ``detail_link`` from
+    list_orders, which encodes the parcels the row covers.
+    """
+    session = get_session()
+    numbers = [order] if _ORDER_NUMBER_RE.fullmatch(order.strip()) else order_numbers_from_link(order)
+    products: list[OrderProduct] = []
+    seen: set[str] = set()
+    for number in numbers:
+        data = session.fetch(f"/my/orderdetails/?order={number}")
+        for product in parse_order_products(data):
+            if product.sku not in seen:
+                seen.add(product.sku)
+                products.append(product)
+    return products
 
 
 def _paginate_tiles(path: str, limit: int, backend: str = "composer") -> list[Tile]:

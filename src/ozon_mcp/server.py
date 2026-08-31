@@ -53,11 +53,14 @@ async def orders_by_date(date_from: str, date_to: str, max_orders: int = 300) ->
 
 
 @mcp.tool()
-async def order_products(order_detail_link: str) -> list[OrderProduct]:
-    """Products of one order as SKUs + links (order → product card). Pass a
-    detail_link from list_orders()[].detail_link or .products[].detail_link.
+async def order_products(order: str) -> list[OrderProduct]:
+    """Products of one order as SKUs and links (order → product card).
+    Accepts an order number ("44563249-0833") or a detail_link from
+    list_orders()[].detail_link / .products[].detail_link.
+    `title` is best-effort — the order page mixes product names with statuses and
+    seller names; use product_details(sku) when the exact name matters.
     """
-    return await run_blocking(lambda: catalog.order_products(order_detail_link))
+    return await run_blocking(lambda: catalog.order_products(order))
 
 
 # ── purchase history ─────────────────────────────────────────────────────────

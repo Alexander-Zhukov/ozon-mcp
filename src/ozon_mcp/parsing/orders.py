@@ -5,11 +5,12 @@ from __future__ import annotations
 import base64
 import datetime
 import json
+import operator
 import re
 from typing import Any, Final
 
-from ozon_mcp.models.orders import Order, OrderThumbnail
-from ozon_mcp.parsing.common import find_all, prices, widget
+from ozon_mcp.models.orders import Order, OrderProduct, OrderThumbnail
+from ozon_mcp.parsing.common import find_all, prices, walk, widget, widgets_all
 
 _RU_MONTHS: Final = {
     "январ": 1,
@@ -102,3 +103,72 @@ def parse_orders(data: dict[str, Any]) -> list[Order]:
             )
         )
     return orders
+
+
+def order_numbers_from_link(link: str | None) -> list[str]:
+    """Order numbers behind an order row.
+
+    The row's ``detail_link`` is a cacheOrderProducts blob listing *postings*
+    ("44563249-0833-6"); the order page is keyed by the number without the
+    trailing parcel segment.
+    """
+    match = re.search(r"data=([A-Za-z0-9_\-=]+)", link or "")
+    if not match:
+        return []
+    try:
+        token = match.group(1) + "=" * (-len(match.group(1)) % 4)
+        postings = json.loads(base64.urlsafe_b64decode(token)).get("postings", [])
+    except (ValueError, TypeError):
+        return []
+    numbers: list[str] = []
+    for posting in postings:
+        number = "-".join(str(posting).split("-")[:2])
+        if number and number not in numbers:
+            numbers.append(number)
+    return numbers
+
+
+_PRODUCT_LINK_RE = re.compile(r"/product/(?:[a-z0-9\-]+-)?(\d{6,})")
+
+# Phrases the order page shows next to a product that are not its name.
+_NOT_A_TITLE_RE = re.compile(
+    r"^(Причина отмены|Можно забирать|В службе доставки|Заказ (от|покинул)|Доставим|Отменён|Из пункта выдачи|Доставка)",
+    re.IGNORECASE,
+)
+
+
+def parse_order_products(data: dict[str, Any]) -> list[OrderProduct]:
+    """Products of an order-details page.
+
+    They live in the shipmentWidget instances — one per parcel — so the page's
+    recommendation grids are skipped by only reading those.
+
+    The sku is authoritative. The title is **best-effort**: a product's name is
+    a sibling of its link rather than a child, and the page is dense with
+    statuses, tracking sentences, cancellation reasons and seller names, none of
+    which can be told from a product name by shape alone. The tightest node
+    still containing exactly one product is used as that product's card, with
+    the obvious service phrases filtered out — good enough to recognise an item,
+    not something to display verbatim. For a reliable name, resolve the sku with
+    product_details.
+    """
+    products: dict[str, OrderProduct] = {}
+    for state in widgets_all(data, "shipmentWidget"):
+        cards: list[tuple[int, str, str | None]] = []
+        for node in walk(state):
+            blob = json.dumps(node, ensure_ascii=False)
+            skus = set(_PRODUCT_LINK_RE.findall(blob))
+            if len(skus) != 1:
+                continue
+            titles = [
+                text.strip()
+                for text in find_all(node, "text")
+                if isinstance(text, str) and 15 < len(text.strip()) < 200 and not _NOT_A_TITLE_RE.match(text.strip())
+            ]
+            cards.append((len(blob), skus.pop(), max(titles, key=len, default=None)))
+        # Tightest wrapper first, so a product's own card wins over its section.
+        for _, sku, title in sorted(cards, key=operator.itemgetter(0)):
+            existing = products.get(sku)
+            if existing is None or (existing.title is None and title is not None):
+                products[sku] = OrderProduct(sku=sku, title=title, url=f"https://www.ozon.ru/product/{sku}/")
+    return list(products.values())

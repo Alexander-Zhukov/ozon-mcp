@@ -203,3 +203,22 @@ def _facet_options(spec: dict[str, Any]) -> list[FilterOption]:
         if isinstance(category, dict)
     )
     return options[:40]
+
+
+_DELIVERY_TERM_RE = re.compile(r"(?:С|с)\s+\d{1,2}\s+\w+|Доставим[^,.]{0,40}|Послезавтра|Завтра|Сегодня")
+
+
+def parse_delivery_widget(state: Any) -> dict[str, str | None]:
+    """Delivery estimate out of the webDelivery widget state.
+
+    The widget is a list of sections (address, terms, returns); the term is the
+    first date-ish phrase in them, and the address explains what it is relative
+    to — the estimate is meaningless without it.
+    """
+    texts = [
+        t.strip() for t in find_all(state, "content") + find_all(state, "text") if isinstance(t, str) and t.strip()
+    ]
+    term = next((m.group(0) for text in texts if (m := _DELIVERY_TERM_RE.search(text))), None)
+    address = next((text for text in texts if re.search(r"ул\.|просп|Пункт|д\.\s*\d", text)), None)
+    source = next((text for text in texts if "склад" in text.lower()), None)
+    return {"delivery": term, "address": address, "source": source}

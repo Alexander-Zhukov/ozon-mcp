@@ -14,29 +14,17 @@ from typing import TYPE_CHECKING, Any
 
 from ozon_mcp.dependencies import get_session
 from ozon_mcp.errors import WritesDisabledError
-from ozon_mcp.models.lists import ListId, ListRef, PriceDiff
 from ozon_mcp.parsing import catalog as catalog_parse
 from ozon_mcp.parsing.common import PRICE_RE, find_all, widget
-from ozon_mcp.parsing.lists import parse_lists
+from ozon_mcp.parsing.lists import parse_list_page, parse_lists
 from ozon_mcp.services import monitoring
 from ozon_mcp.settings import get_settings
 
 if TYPE_CHECKING:
     from ozon_mcp.models.catalog import Tile
+    from ozon_mcp.models.lists import ListId, ListRef, PriceDiff
 
-# Collection cards render "<name> N товар(а)"; wishlists "<name> N подарков".
-_CARDS_JS = r"""() => {
-  const text = (document.body.innerText || '').replace(/\r/g, '');
-  const re = /([^\n]{2,40}?)\s+(\d+)\s+(товар\w*|подарк\w*)/g;
-  const out = []; const seen = new Set(); let m;
-  while ((m = re.exec(text))) {
-    const name = m[1].trim();
-    if (/^(Избранное|Подборки|Вишлисты|Магазины|Создать|Новый|Мои|Товары за)/i.test(name)) continue;
-    if (seen.has(name)) continue; seen.add(name);
-    out.push({name, items: +m[2]});
-  }
-  return out;
-}"""
+_LISTS_PATH = "/my/favorites/lists"
 
 
 def _price_number(price: str | None) -> int | None:
@@ -66,13 +54,11 @@ def check_favorite_price_drops() -> PriceDiff:
 
 
 def list_collections() -> list[ListRef]:
-    raw = get_session().nav_click_extract("/my/favorites", "Подборк", _CARDS_JS)
-    return [ListRef.model_validate(item) for item in raw or []]
+    return parse_list_page(get_session().fetch(_LISTS_PATH), wishlists=False)
 
 
 def list_wishlists() -> list[ListRef]:
-    raw = get_session().nav_click_extract("/my/favorites", "Вишлист", _CARDS_JS)
-    return [ListRef.model_validate(item) for item in raw or []]
+    return parse_list_page(get_session().fetch(_LISTS_PATH), wishlists=True)
 
 
 def get_lists(sku: str) -> list[ListId]:

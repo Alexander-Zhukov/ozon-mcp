@@ -50,3 +50,34 @@ PURCHASE_SORTS: Final = {
     "cheap": "price",
     "discount": "discount",
 }
+
+# Per-widget endpoint. Some blocks on a page arrive empty and are filled by a
+# second call naming the widget state; the delivery estimate is one of them.
+WIDGET_URL: Final = "https://www.ozon.ru/api/composer-api.bx/widget/json/v2?widgetStateId="
+
+# The component descriptor the site posts to fetch webDelivery, captured from a
+# live page load. Version-pinned by Ozon's layout, so the caller falls back to
+# reading the rendered page if this stops returning a state.
+WEB_DELIVERY_STATE_ID: Final = "webDelivery-8727767-default-1"
+WEB_DELIVERY_CI: Final = {
+    "view": {"name": "webDelivery", "vertical": "pdp", "version": 7},
+    "vertical": "pdp",
+    "name": "webDelivery",
+    "params": [
+        {"name": "foodPreOrder", "bool": True},
+        {"name": "theme", "text": "default"},
+        {
+            "name": "holidaysNotificationText",
+            "text": "Сроки доставки увеличены, так как склад продавца не работает в праздники",
+        },
+        {"name": "holidaysNotificationLinkText", "text": "Посмотреть товары других продавцов"},
+        {"name": "digitalProductMode"},
+        {"name": "multipleDeliveries", "bool": True},
+        {"name": "checkOldSkuOffers"},
+        {"name": "isSkeletonEnabled"},
+        {"name": "hiddenDeliveryWidget"},
+    ],
+    "version": 8,
+    "layoutID": 11852,
+    "id": 8727767,
+}
