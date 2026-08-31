@@ -18,7 +18,7 @@ from ozon_mcp.models.catalog import (
     Variant,
     VariantOption,
 )
-from ozon_mcp.parsing.common import IMAGE_RE, PRICE_RE, find_all, prices, widget
+from ozon_mcp.parsing.common import IMAGE_RE, PRICE_RE, find_all, prices, widget, widget_with
 
 
 def parse_tiles(data: dict[str, Any]) -> list[Tile]:
@@ -54,7 +54,7 @@ def parse_gallery(data: dict[str, Any]) -> list[str]:
 
 def parse_characteristics(data: dict[str, Any]) -> list[Characteristic]:
     """Name/value pairs from webShortCharacteristics."""
-    state = widget(data, "webShortCharacteristics") or {}
+    state = widget_with(data, "webShortCharacteristics", "characteristics") or {}
     out: list[Characteristic] = []
     for item in (state.get("characteristics") if isinstance(state, dict) else None) or []:
         if not isinstance(item, dict):
@@ -141,21 +141,32 @@ def parse_description(sku: str, data: dict[str, Any]) -> Description:
 
     Not in the main /product/ composer JSON — it lives in the entrypoint second
     container (?layout_container=pdpPage2column&layout_page_index=2).
+
+    Ozon writes it two ways: ``richAnnotation`` is plain HTML (the common case),
+    ``richAnnotationJson`` a structured block of text nodes. Both are handled,
+    since a seller's choice between them is invisible from the outside.
     """
-    state = widget(data, "webDescription") or {}
+    state = widget_with(data, "webDescription", "richAnnotation", "richAnnotationJson") or {}
+    chunks: list[str] = []
+
+    plain = state.get("richAnnotation")
+    if isinstance(plain, str) and plain.strip():
+        chunks.append(plain)
+
     rich = state.get("richAnnotationJson")
     if isinstance(rich, str):
         try:
             rich = json.loads(rich)
         except ValueError:
             rich = None
-    chunks: list[str] = []
-    for content in find_all(rich or state, "content") + find_all(rich or state, "text"):
-        if isinstance(content, str):
-            chunks.append(content)
-        elif isinstance(content, list):
-            chunks += [c for c in content if isinstance(c, str)]
-    joined = re.sub(r"<[^>]+>", " ", " ".join(dict.fromkeys(c for c in chunks if len(c) > 3)))
+    if rich:
+        for content in find_all(rich, "content") + find_all(rich, "text"):
+            if isinstance(content, str):
+                chunks.append(content)
+            elif isinstance(content, list):
+                chunks += [item for item in content if isinstance(item, str)]
+
+    joined = re.sub(r"<[^>]+>", " ", " ".join(dict.fromkeys(chunk for chunk in chunks if len(chunk) > 3)))
     joined = re.sub(r"\s+", " ", joined).strip()
     images = list(dict.fromkeys(IMAGE_RE.findall(json.dumps(state, ensure_ascii=False))))
     return Description(sku=sku, description=joined or None, images=images)

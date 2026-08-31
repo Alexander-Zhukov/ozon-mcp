@@ -29,33 +29,30 @@ a persistent browser profile seeded by one interactive login.
 
 | Tool | Description |
 |---|---|
-| `list_orders` | Orders (active / completed archive / all) with status, ETA, date, totals, thumbnails |
-| `orders_by_date` | Completed orders within an ISO date range |
+| `list_orders` | Orders (active / archive / all), optionally within an ISO date range |
 | `order_products` | Items of one order: sku, title, price paid, variant, seller |
-| `list_purchases` | Full purchase history (sorted by date / price) |
-| `search_purchases` | Fast server-side search within purchases |
-| `search` | Storefront search with sort and facet filters |
-| `get_search_filters` | Available facets (category / brand / price range / …) for a query |
-| `browse_category` | Products of a category by slug |
-| `product_details` | Title, price, variants (color/size), characteristics, photos |
-| `get_photos` | All product photos |
-| `get_reviews` | Reviews with score, text, dates and photos |
-| `get_characteristics` | Product characteristics (name/value) |
-| `get_description` | Product description text + embedded images |
-| `delivery_estimate` | Delivery ETA for a product |
-| `find_cheaper` | Find the same/similar product cheaper |
-| `get_cart` | Cart contents with quantities |
-| `add_to_cart` / `remove_from_cart` / `set_cart_quantity` | Cart changes (gated) |
-| `list_favorites` | Favorites as product tiles |
-| `favorites_price_snapshot` / `check_favorite_price_drops` | Favorites price monitoring |
-| `list_collections` / `list_wishlists` | Collections and wishlists |
-| `get_lists` | Collections/wishlists with ids |
-| `add_to_list` / `remove_from_list` | List membership (gated) |
-| `set_favorite` | Add/remove from favorites (gated) |
+| `purchases` | Purchase history — all of it, or a fast server-side search |
 | `list_returns` | Buyer returns |
-| `get_checkout` | The order being formed: payment options, pay-on-delivery switch, pickup point, delivery dates, points, totals |
-| `configure_checkout` | Set options: payment method, points to spend, pay-on-delivery switch, pickup point (per shipment) |
-| `place_order` | **Spends money** — submit the order (gated by `OZON_ENABLE_ORDERS`) |
+| `search` | Storefront search by text and/or category, with sort and facet filters |
+| `get_search_filters` | Facets available for a query (category / brand / price range / …) |
+| `product_details` | Card: price, variants, characteristics, photos; description and reviews on request |
+| `get_reviews` | Reviews with score, text, dates and photos |
+| `get_description` | Description text + embedded images |
+| `delivery_estimate` | When it arrives, to which address, from which warehouse |
+| `find_cheaper` | Find the same/similar product cheaper |
+| `get_cart` | Whole cart: items, quantities, ticks, Ozon's group headings |
+| `set_cart_quantity` | Set quantity; 0 removes (gated) |
+| `select_cart_items` | Tick what makes up the order — only / add / remove / all / none (gated) |
+| `list_favorites` | Favorites as product tiles |
+| `set_favorite` | Add to / remove from favorites (gated) |
+| `get_lists` | Collections and wishlists; with a sku, also their ids |
+| `set_list_membership` | Put a product in a list or take it out (gated) |
+| `check_favorite_price_drops` | Price diff for favorites since the previous call |
+| `get_checkout` | The order being formed: payment, pay-on-delivery, destinations, pickup points, dates, points, totals |
+| `configure_checkout` | Set payment, points, pay-on-delivery and pickup point in one call |
+| `place_order` | **Spends money** — submit, waiting until the order exists (gated by `OZON_ENABLE_ORDERS`) |
+| `list_cancel_reasons` | Reasons Ozon accepts for cancelling an order |
+| `cancel_order` | Cancel an order, returning items to the cart (gated) |
 | `get_finances` | Ozon Card balance and total points |
 | `get_points` | Points by type + burning + per-store seller bonuses |
 

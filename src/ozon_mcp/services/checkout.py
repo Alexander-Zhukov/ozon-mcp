@@ -14,6 +14,8 @@ Placing an order spends real money, so it sits behind its own flag
 
 from __future__ import annotations
 
+import re
+import time
 from typing import TYPE_CHECKING, Any, Final
 
 from ozon_mcp.dependencies import get_session
@@ -23,13 +25,20 @@ from ozon_mcp.parsing.common import widget
 from ozon_mcp.settings import get_settings
 
 if TYPE_CHECKING:
-    from ozon_mcp.models.checkout import Checkout, Delivery, PaymentOption, PickupPoint
+    from ozon_mcp.models.checkout import Delivery, PaymentOption, PickupPoint
+
+from ozon_mcp.models.checkout import Checkout, OrderPlaced
 
 # The checkout body lives in the entrypoint "second container", like the product
 # description and the search facets.
 _CONTAINER: Final = "layout_container=checkout&layout_page_index=2"
 _CHECKOUT_PATH: Final = f"/gocheckout?{_CONTAINER}"
 _CREATE_ORDER_ACTION: Final = "v2/createOrderV2"
+_INIT_CHECKOUT_ACTION: Final = "initCheckoutState"
+# Order creation is asynchronous: the first call schedules it and the client
+# re-calls the same action until the response carries the result instead of
+# another polling instruction.
+_ORDER_POLL_ATTEMPTS: Final = 40
 
 # Ozon names the methods in English internals only, but a person says "СБП" or
 # "ЮMoney" — so map the words onto the `kind` the payload carries.
@@ -148,8 +157,29 @@ def _target_delivery(checkout: Checkout, split_key: str | None) -> Delivery:
     return deliveries[0]
 
 
-def get_checkout() -> Checkout:
+def start_checkout() -> Checkout:
+    """Form a checkout from the items currently ticked in the cart.
+
+    Ozon needs this step before /gocheckout resolves to anything: without it the
+    URL falls back to the cart, which reads as "nothing to order" even though
+    items are selected. It is what pressing «Перейти к оформлению» does.
+    """
+    from ozon_mcp.services.cart import get_cart  # ruff: ignore[import-outside-top-level] - avoids a cycle
+
+    selected = [(item.id, item.quantity or 1) for item in get_cart().items if item.checked and item.id]
+    if not selected:
+        return Checkout(available=False, reason="no cart items are selected — select them first")
+    body = {"items": [{"id": sku, "quantity": quantity} for sku, quantity in selected]}
+    get_session().action(_INIT_CHECKOUT_ACTION, body)
     return _read()
+
+
+def get_checkout() -> Checkout:
+    """The order being formed, initialising it if Ozon has not done so yet."""
+    checkout = _read()
+    if not checkout.available and "selected" not in (checkout.reason or ""):
+        return start_checkout()
+    return checkout
 
 
 def configure_checkout(
@@ -193,12 +223,16 @@ def _digits(value: str | None) -> str:
     return "".join(ch for ch in (value or "") if ch.isdigit())
 
 
-def place_order(confirm_total: str) -> dict[str, Any]:
+def place_order(confirm_total: str) -> OrderPlaced:
     """Submit the order — this spends money and is not undoable from here.
 
     ``confirm_total`` must match the total Ozon is currently charging, so a
     stale plan cannot silently pay a different amount. Compared on digits only,
     since the string carries spaces, ₽ and a "сегодня" suffix.
+
+    Creation is asynchronous: the action is re-called until it returns the order
+    instead of another polling instruction, so this comes back only once the
+    order actually exists.
     """
     if not get_settings().enable_orders:
         raise OrdersDisabledError
@@ -209,4 +243,21 @@ def place_order(confirm_total: str) -> dict[str, Any]:
     actual = checkout.totals.total
     if _digits(confirm_total) != _digits(actual):
         raise TotalMismatchError(confirm_total, actual)
-    return get_session().action(_CREATE_ORDER_ACTION, {"id": "createOrder"})
+
+    session = get_session()
+    for _ in range(_ORDER_POLL_ATTEMPTS):
+        response = session.action(_CREATE_ORDER_ACTION, {"id": "createOrder"})
+        data = response.get("data") or {}
+        created = data.get("createOrderResponse")
+        if isinstance(created, dict):
+            link = str(created.get("link") or "")
+            number = re.search(r"orderNumber=([\w\-]+)", link)
+            return OrderPlaced(
+                order_number=number.group(1) if number else None,
+                total=actual,
+                link=link or None,
+            )
+        pooling = data.get("poolingDetails") or {}
+        time.sleep((pooling.get("delay") or 500) / 1000)
+    msg = "order creation did not finish in time; check the orders list before retrying"
+    raise OzonError(msg)

@@ -15,6 +15,7 @@ from ozon_mcp.constants import (
     WEB_DELIVERY_STATE_ID,
 )
 from ozon_mcp.dependencies import get_session
+from ozon_mcp.errors import OzonError
 from ozon_mcp.models.catalog import (
     Cheaper,
     Description,
@@ -53,10 +54,30 @@ def _query_string(filters: dict[str, str] | None) -> str:
     return "".join(f"&{k}={v}" for k, v in (filters or {}).items() if v not in {None, ""})
 
 
-def search(query: str, sort: str = "popular", page: int = 1, filters: dict[str, str] | None = None) -> list[Tile]:
+def search(
+    query: str | None = None,
+    category: str | None = None,
+    sort: str = "popular",
+    page: int = 1,
+    filters: dict[str, str] | None = None,
+) -> list[Tile]:
+    """Storefront search, by text and/or inside a category.
+
+    Ozon serves both from the same shape, and an agent usually has either a
+    phrase, a category, or both — so this is one entry point rather than two
+    tools that differ only in the path.
+    """
     value = SEARCH_SORTS.get(sort, sort)
-    url = f"/search/?text={query}&page={page}" + (f"&sorting={value}" if value else "") + _query_string(filters)
-    return parse.parse_tiles(get_session().fetch(url))
+    if not query and not category:
+        msg = "search needs a query, a category, or both"
+        raise OzonError(msg)
+    base = f"/category/{category.strip('/')}/" if category else "/search/"
+    url = f"{base}?page={page}"
+    if query:
+        url += f"&text={query}"
+    if value:
+        url += f"&sorting={value}"
+    return parse.parse_tiles(get_session().fetch(url + _query_string(filters)))
 
 
 def get_search_filters(query: str) -> list[SearchFilter]:
@@ -67,21 +88,26 @@ def get_search_filters(query: str) -> list[SearchFilter]:
     )
 
 
-def browse_category(
-    category: str, sort: str = "popular", page: int = 1, filters: dict[str, str] | None = None
-) -> list[Tile]:
-    value = SEARCH_SORTS.get(sort, sort)
-    url = (
-        f"/category/{category.strip('/')}/?page={page}"
-        + (f"&sorting={value}" if value else "")
-        + _query_string(filters)
-    )
-    return parse.parse_tiles(get_session().fetch(url))
+def product_details(
+    sku_or_url: str,
+    *,
+    with_description: bool = False,
+    with_reviews: bool = False,
+) -> ProductCard:
+    """The product card, optionally with its description and reviews.
 
-
-def product_details(sku_or_url: str) -> ProductCard:
+    Those two live behind their own endpoints, so they are opt-in: the common
+    "what is this and what does it cost" stays a single request.
+    """
     sku = _sku(sku_or_url)
-    return parse.parse_product(get_session().fetch(f"/product/{sku}/"))
+    card = parse.parse_product(get_session().fetch(f"/product/{sku}/"))
+    if with_description:
+        described = get_description(sku)
+        card.description = described.description
+        card.description_images = described.images
+    if with_reviews:
+        card.reviews = get_reviews(sku)
+    return card
 
 
 def get_photos(sku_or_url: str) -> list[str]:
@@ -169,11 +195,14 @@ def _paginate_tiles(path: str, limit: int, backend: str = "composer") -> list[Ti
     return tiles[:limit]
 
 
-def list_purchases(limit: int = 100, sort: str = "newest") -> list[Tile]:
+def purchases(query: str | None = None, limit: int = 100, sort: str = "newest") -> list[Tile]:
+    """Purchase history — everything ever bought, or just what matches a query.
+
+    Ozon has a dedicated server-side search over purchases which is far cheaper
+    than paginating the whole list, so a query switches to it.
+    """
+    if query:
+        return _paginate_tiles(f"/my/purchases/search?text={query}", limit, backend="entrypoint")
     value = PURCHASE_SORTS.get(sort, sort)
     path = f"/my/favorites/list?list={PURCHASES_LIST_ID}" + (f"&sorting={value}" if value else "")
     return _paginate_tiles(path, limit)
-
-
-def search_purchases(query: str, limit: int = 60) -> list[Tile]:
-    return _paginate_tiles(f"/my/purchases/search?text={query}", limit, backend="entrypoint")
