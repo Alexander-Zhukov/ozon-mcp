@@ -13,7 +13,12 @@ def parse_cart(data: dict[str, Any]) -> Cart:
     unavailable / by-seller).
     """
     items: list[CartItem] = []
+    groups: list[str] = []
     for state in widgets_all(data, "cartSplit"):
+        header = (state.get("header") or {}) if isinstance(state, dict) else {}
+        group = next((t for t in find_all(header, "text") if isinstance(t, str) and t.strip()), None)
+        if group and group not in groups:
+            groups.append(group)
         for entry in (state.get("cartItems") if isinstance(state, dict) else None) or []:
             product = entry.get("product") or {}
             controls = entry.get("controls") or {}
@@ -30,6 +35,7 @@ def parse_cart(data: dict[str, Any]) -> Cart:
                     max_quantity=quantity.get("maximum"),
                     checked=(entry.get("checkbox") or {}).get("isChecked"),
                     is_favorite=(controls.get("favoriteToggle") or {}).get("isFavorite"),
+                    group=group,
                 )
             )
-    return Cart(items=items, item_count=len(items))
+    return Cart(items=items, item_count=len(items), groups=groups)

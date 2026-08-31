@@ -12,9 +12,18 @@ class CartItem(OzonModel):
     quantity: int | None = None
     max_quantity: int | None = None
     checked: bool | None = None
+    group: str | None = None
     is_favorite: bool | None = None
 
 
 class Cart(OzonModel):
+    """The whole cart, paginated through.
+
+    ``groups`` are Ozon's own headings ("Доступны для заказа", "Бронирование
+    товаров", …); an item's ``group`` says which one it came from, because that
+    is what decides whether it can be ordered at all.
+    """
+
     items: list[CartItem] = []
     item_count: int = 0
+    groups: list[str] = []
