@@ -22,7 +22,7 @@ impersonation) as direct HTTP — no browser per call. The browser is reused onl
 for token refresh and the few DOM-rendered reads.
 
 Requirements: run from a **Russian IP** (Ozon blocks datacenter/VPN egress) and
-provide a saved logged-in session (`state.json`).
+a persistent browser profile seeded by one interactive login.
 
 ## Tools
 
@@ -52,6 +52,11 @@ provide a saved logged-in session (`state.json`).
 | `add_to_list` / `remove_from_list` | List membership (gated) |
 | `set_favorite` | Add/remove from favorites (gated) |
 | `list_returns` | Buyer returns |
+| `get_checkout` | The order being formed: payment options, pay-on-delivery switch, pickup point, delivery dates, points, totals |
+| `set_payment_method` | Select a payment method by `payment_type` |
+| `set_pay_after_receipt` | Toggle «Оплатить после получения» (pay on delivery for part of the order) |
+| `apply_points` | Spend N points on the order (0 clears) |
+| `place_order` | **Spends money** — submit the order (gated by `OZON_ENABLE_ORDERS`) |
 | `get_finances` | Ozon Card balance and total points |
 | `get_points` | Points by type + burning + per-store seller bonuses |
 
@@ -60,34 +65,50 @@ them.
 
 ## Session and state
 
-Login uses Ozon's email + push/flash-call 2FA, so it is a **manual, one-time
-onboarding** that produces `state.json` (a Playwright storage state). Point the
-server at it with `OZON_STATE`.
+The session lives in a **persistent Chromium profile**, not a cookie snapshot.
+That is deliberate: OzonID — the auth realm guarding checkout — keeps its
+session outside cookies and localStorage, so a Playwright `storage_state`
+snapshot silently loses it and checkout falls back to a login prompt. A real
+profile directory keeps everything, so one login stays valid and the server
+runs unattended afterwards.
 
-**`/data` must be a bind mount.** The session is not static: Ozon rotates the
-access/refresh cookies, and the server writes `state.json` back after every
-call so the refresh chain survives a restart. If that directory is ephemeral,
-the rotated session is lost on container recreation and you are back to a
-manual 2FA login. Mount a real host directory:
+Login itself (email/phone + one-time code) is a **manual, one-time onboarding**
+performed once against the profile directory.
+
+**`/data` must be a bind mount.** It holds the profile, and Ozon rotates the
+session constantly — cookies rotated over HTTP are pushed back into the profile
+so the refresh chain survives a restart. On an ephemeral directory you lose the
+login on every container recreation.
 
 ```bash
 -v /opt/ozon-mcp:/data
 ```
 
-`/data` holds two files: `state.json` (the session) and `price_history.json`
-(favorites price snapshots).
+`/data` holds `profile/` (the session) and `price_history.json` (favorites price
+snapshots). A legacy `state.json`, if present, is imported once to seed a brand
+new profile — enough for the read tools, but not for checkout.
 
-> **`state.json` is a credential.** It grants full access to the account —
-> orders, addresses, card balance. Treat it like a password: `0600`, never
-> commit it, back it up encrypted.
+> **The profile is a credential.** It grants full access to the account —
+> orders, addresses, card balance, and the checkout flow. Never commit it; back
+> it up encrypted.
+
+**Two things that will bite you**, both learned the hard way:
+
+- **Refresh tokens are single-use.** Restoring an older copy of a session fails
+  and lands you on an anonymous one, so an old backup is not a rollback.
+- **Visiting the checkout login flow downgrades the session to a guest.** The
+  server refuses to persist such a state rather than overwriting a working
+  login with it.
 
 ## Configuration
 
 | Env var | Default | Description |
 |---|---|---|
-| `OZON_STATE` | `/data/state.json` | Path to the saved authenticated session |
+| `OZON_PROFILE_DIR` | `/data/profile` | Persistent Chromium profile holding the session |
+| `OZON_STATE` | `/data/state.json` | Legacy snapshot, imported once to seed a new profile |
 | `OZON_IMPERSONATE` | `chrome124` | curl_cffi TLS-impersonation profile |
 | `OZON_ENABLE_WRITES` | `0` | Allow cart/favorites/list mutations |
+| `OZON_ENABLE_ORDERS` | `0` | Allow `place_order` — **spends money**, gated separately |
 | `OZON_MONITOR_STORE` | `/data/price_history.json` | Favorites price-history file |
 | `OZON_TRANSPORT` | `stdio` | `stdio` (client spawns the process) or `sse` (HTTP service) |
 | `OZON_HOST` | `0.0.0.0` | Bind address for the `sse` transport |
@@ -136,30 +157,16 @@ make check-all   # ruff format-check + ruff lint + ty typecheck + pytest
 
 ## Limitations
 
-**Checkout is out of reach, by Ozon's design.** The server can fill and read the
-cart, but it cannot place an order. Pressing "Перейти к оформлению" lands on
-`/gocheckout/login`, a three-step wizard (Авторизация → Доставка → Оформление)
-whose first step is a **full OzonID re-authentication** in an iframe: phone plus
-a one-time code by SMS, call or email (or VK ID / Gosuslugi). This is a step-up
-gate specific to checkout — the same session reads orders, balances and writes to
-the cart without complaint.
-
-Everything past that gate is therefore unreachable, which includes:
-
-- choosing a pickup point or delivery slot,
-- selecting a payment method,
-- placing the order.
-
-Note the consequence for payment options: the payment step cannot be *read*
-either, so this project makes **no claim** about which methods (pay-on-delivery,
-instalments, …) are available for an account — that screen simply cannot be
-opened without a human entering a code.
-
-Other constraints:
-
 - **A Russian IP is required.** Ozon blocks datacenter and VPN egress.
 - **A real Chromium is required** for the bootstrap; headless is detected.
-- The session is a credential, and it rotates — see [Session and state](#session-and-state).
+- **The profile must be seeded by one interactive login.** OzonID — the auth
+  realm guarding checkout — keeps state a cookie snapshot cannot carry, so the
+  browser runs on a persistent profile; see [Session and state](#session-and-state).
+- **Pickup-point *selection* is not implemented yet.** The current point is read
+  back by `get_checkout`, but choosing a different one goes through a lazy
+  address-book modal that is not wired up.
+- **Placing an order spends real money** and is gated separately from every
+  other write, behind `OZON_ENABLE_ORDERS`.
 
 ## Disclaimer
 

@@ -25,10 +25,11 @@ from ozon_mcp.models.catalog import (
     SearchFilter,
     Tile,
 )
+from ozon_mcp.models.checkout import Checkout
 from ozon_mcp.models.finance import Finances, Points
 from ozon_mcp.models.lists import ListId, ListRef, PriceDiff
 from ozon_mcp.models.orders import Order, OrderProduct
-from ozon_mcp.services import cart, catalog, favorites, finance, orders
+from ozon_mcp.services import cart, catalog, checkout, favorites, finance, orders
 
 mcp = FastMCP("ozon")
 
@@ -247,6 +248,60 @@ async def add_to_list(sku: str, list_id: int) -> dict[str, Any]:
 async def remove_from_list(sku: str, list_id: int) -> dict[str, Any]:
     """[GATED] Remove a product from a collection/wishlist by its id."""
     return await run_blocking(lambda: favorites.remove_from_list(sku, list_id))
+
+
+# ── checkout ─────────────────────────────────────────────────────────────────
+@mcp.tool()
+async def get_checkout() -> Checkout:
+    """The order being formed from the cart: payment options (each with the
+    payment_type to pass to set_payment_method), whether part of it can be paid
+    on delivery, the pickup point / courier mode and recipient, per-shipment
+    delivery dates, points choices and the money breakdown.
+    Requires an intact OzonID login; returns available=false with a reason if the
+    cart is empty or checkout is not reachable.
+    """
+    return await run_blocking(checkout.get_checkout)
+
+
+@mcp.tool()
+async def set_payment_method(payment_type: int) -> Checkout:
+    """Select a payment method and return the recomputed checkout.
+    payment_type comes from get_checkout().payment_options — e.g. 1626 (СБП /
+    fast payment), 2044 (SberPay and saved cards), 3 (new card), 22 (YooMoney).
+    Saved cards share type 2044 and differ only by their masked label.
+    Paying on delivery is not a selectable type: Ozon derives it from the cart
+    and reports it in get_checkout().pay_after_receipt.
+    """
+    return await run_blocking(lambda: checkout.set_payment_method(payment_type))
+
+
+@mcp.tool()
+async def apply_points(amount: int) -> Checkout:
+    """Spend `amount` Ozon points on the current order; 0 clears the deduction.
+    Allowed values come from get_checkout().points (Ozon caps what it will take).
+    """
+    return await run_blocking(lambda: checkout.apply_points(amount))
+
+
+@mcp.tool()
+async def set_pay_after_receipt(enabled: bool) -> Checkout:
+    """Turn Ozon's "Оплатить после получения" (pay on delivery for part of the
+    order) on or off, returning the recomputed checkout.
+    Only meaningful when get_checkout().pay_after_receipt.available is true —
+    Ozon offers it per cart. When on, part of the total may still be prepaid;
+    see pay_after_receipt.prepayment.
+    """
+    return await run_blocking(lambda: checkout.set_pay_after_receipt(enabled=enabled))
+
+
+@mcp.tool()
+async def place_order() -> dict[str, Any]:
+    """[GATED — SPENDS MONEY] Submit the order that get_checkout() describes.
+    Disabled unless OZON_ENABLE_ORDERS=1, separately from OZON_ENABLE_WRITES.
+    Irreversible from here: cancelling afterwards is done in Ozon itself. Always
+    read get_checkout() and confirm the total with the user before calling this.
+    """
+    return await run_blocking(checkout.place_order)
 
 
 # ── finance ──────────────────────────────────────────────────────────────────

@@ -1,14 +1,21 @@
-"""Authenticated OZON session — browser-bootstrapped, HTTP-served.
+"""Authenticated OZON session — persistent browser profile, HTTP-served.
 
 OZON's Variti antibot blocks non-browser clients, but a real Chromium only has
 to pass the challenge **once**: harvest its cookies plus the exact client-hint
 header set, and thereafter direct HTTP via curl_cffi (Chrome TLS impersonation)
-reaches the authenticated composer-api / _action endpoints with no live browser
-per call. The browser is kept only for bootstrap, token refresh, and the few
-DOM-rendered reads (delivery estimate, подборки/вишлисты).
+reaches the authenticated composer-api / _action endpoints without a live
+browser per call.
 
-Session cookies rotate; they are persisted back to ``state_path`` so the refresh
-chain survives. Login (2FA) is a one-time manual onboarding, not automated here.
+The browser runs on a **persistent profile** rather than a Playwright
+``storage_state`` snapshot. storage_state only carries cookies and
+localStorage; OzonID — the auth realm guarding checkout — keeps its session and
+device trust outside both, so a snapshot silently drops it and checkout falls
+back to a login prompt. A real profile directory keeps everything (IndexedDB,
+service workers, device fingerprint), so one interactive login stays valid.
+
+That makes the profile the single source of truth for the session, which is why
+cookies rotated on the HTTP side are pushed back into the live context: Chrome
+then flushes them to disk, and the refresh chain survives a restart.
 """
 
 from __future__ import annotations
@@ -41,9 +48,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger("ozon_mcp")
 
 _ANTIBOT = re.compile(r"antibot|ограничен|нет соединения|доступ", re.IGNORECASE)
-_ANONYMOUS_MARKERS: Final[tuple[str, ...]] = ("profileMenuAnonymous", "loginButton")
+# Cookies that carry the login; only these are worth syncing back to the browser.
+_SESSION_COOKIES: Final[frozenset[str]] = frozenset({
+    "__Secure-access-token",
+    "__Secure-refresh-token",
+    "__Secure-user-id",
+    "ozonIdAuthResponseToken",
+})
 
 Backend = str  # "composer" | "entrypoint" | "action"
+
+# OZON hands out tokens shaped "<ver>.<userId>.<secret>"; userId 0 means guest.
+_GUEST_USER_ID: Final = "0"
 
 
 def _outcome(status: int) -> str:
@@ -56,38 +72,40 @@ def _outcome(status: int) -> str:
 
 
 class OzonSession:
-    """Browser-bootstrapped, curl_cffi-served OZON session (thread-safe)."""
+    """Persistent-profile browser plus a curl_cffi transport (thread-safe)."""
 
-    def __init__(self, state_path: Path | None = None) -> None:
+    def __init__(self, profile_dir: Path | None = None) -> None:
         settings = get_settings()
-        self._state = state_path or settings.state_path
-        self._idle = settings.idle_seconds
+        self._profile = profile_dir or settings.profile_dir
+        self._seed_state = settings.state_path
         self._impersonate = settings.impersonate
         self._lock = threading.RLock()
         self._playwright: Any = None
-        self._browser: Any = None
         self._context: Any = None
         self._page: Any = None
         self._http: Any = None
         self._headers: dict[str, str] = {}
+        self._synced: dict[str, str] = {}
         self._last_used = 0.0
 
     # -- browser lifecycle ---------------------------------------------------
     def _launch_browser(self) -> None:
         if self._page is not None:
             return
-        if not self._state.exists():
-            msg = f"No session at {self._state}; run the one-time login first."
-            raise RuntimeError(msg)
+        fresh = not (self._profile / "Default").exists()
+        self._profile.mkdir(parents=True, exist_ok=True)
         self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(headless=False, args=list(LAUNCH_ARGS))
-        self._context = self._browser.new_context(
-            storage_state=str(self._state),
+        self._context = self._playwright.chromium.launch_persistent_context(
+            user_data_dir=str(self._profile),
+            headless=False,
+            args=list(LAUNCH_ARGS),
             locale="ru-RU",
             timezone_id="Europe/Moscow",
             viewport={"width": 1366, "height": 900},
         )
-        self._page = self._context.new_page()
+        if fresh:
+            self._seed_from_state()
+        self._page = self._context.pages[0] if self._context.pages else self._context.new_page()
         BROWSER_ACTIVE.set(1)
         self._page.goto(HOME_URL, wait_until="domcontentloaded", timeout=90_000)
         self._page.wait_for_timeout(12_000)  # let Variti set cookies
@@ -95,14 +113,34 @@ class OzonSession:
             self._close_browser()
             raise RuntimeError("antibot challenge not passed")
 
+    def _seed_from_state(self) -> None:
+        """Import a legacy ``state.json`` into a brand-new profile.
+
+        Enough to keep the read tools working without a fresh login; it cannot
+        restore OzonID, so checkout still needs one interactive sign-in.
+        """
+        try:
+            saved = json.loads(self._seed_state.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            logger.info("no session to seed at %s; interactive login required", self._seed_state)
+            return
+        cookies = [c for c in saved.get("cookies") or [] if c.get("name") and c.get("domain")]
+        by_name = {c["name"]: c.get("value") for c in cookies}
+        if by_name.get("__Secure-user-id") == _GUEST_USER_ID:
+            logger.warning("seed session at %s is anonymous; interactive login required", self._seed_state)
+            return
+        if cookies:
+            self._context.add_cookies(cookies)
+            logger.info("seeded %d cookies from %s into a fresh profile", len(cookies), self._seed_state)
+
     def _close_browser(self) -> None:
-        for obj, method in ((self._browser, "close"), (self._playwright, "stop")):
+        for obj, method in ((self._context, "close"), (self._playwright, "stop")):
             try:
                 if obj is not None:
                     getattr(obj, method)()
             except Exception:
                 logger.debug("browser teardown error", exc_info=True)
-        self._playwright = self._browser = self._context = self._page = None
+        self._playwright = self._context = self._page = None
         BROWSER_ACTIVE.set(0)
 
     def _ensure_browser(self) -> None:
@@ -129,13 +167,14 @@ class OzonSession:
         self._http = curl_requests.Session(impersonate=self._impersonate)
         for cookie in self._context.cookies():
             self._http.cookies.set(cookie["name"], cookie["value"], domain=".ozon.ru")
+        self._synced = {c["name"]: c["value"] for c in self._context.cookies() if c["name"] in _SESSION_COOKIES}
         self._last_used = time.time()
 
     def _ensure_http(self) -> None:
+        # The browser is deliberately kept alive: it owns the profile, so closing
+        # it would leave HTTP-side token rotations with nowhere to be persisted.
         if self._http is None or not self._headers:
             self._bootstrap()
-        elif self._page is not None and self._last_used and time.time() - self._last_used > self._idle:
-            self._close_browser()  # keep HTTP alive, drop the idle browser
 
     def _rebootstrap(self) -> None:
         self._http = None
@@ -144,38 +183,30 @@ class OzonSession:
 
     # -- persistence ---------------------------------------------------------
     def save_state(self) -> None:
-        """Persist rotated cookies so the refresh chain survives restarts."""
+        """Push HTTP-rotated session cookies back into the browser profile."""
         with self._lock:
+            if self._context is None or self._http is None:
+                return
+            jar = {c.name: c.value for c in self._http.cookies.jar}
+            # Visiting the checkout login flow downgrades the session to a guest
+            # one. Persisting that would overwrite a working login with an
+            # anonymous token and silently lock the account out.
+            if jar.get("__Secure-user-id") == _GUEST_USER_ID:
+                logger.warning("session went anonymous upstream; refusing to persist it")
+                return
+            rotated = [
+                {"name": name, "value": value, "domain": ".ozon.ru", "path": "/"}
+                for name, value in jar.items()
+                if name in _SESSION_COOKIES and self._synced.get(name) != value
+            ]
+            if not rotated:
+                return
             try:
-                if self._context is not None:
-                    self._context.storage_state(path=str(self._state))
-                elif self._http is not None:
-                    self._persist_http_cookies()
+                self._context.add_cookies(rotated)
+                self._synced.update({c["name"]: str(c["value"]) for c in rotated})
+                logger.info("synced %d rotated cookie(s) into the profile", len(rotated))
             except Exception:
-                logger.debug("state persist error", exc_info=True)
-
-    def _persist_http_cookies(self) -> None:
-        try:
-            previous = json.loads(self._state.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            previous = {}
-        cookies = [
-            {
-                "name": c.name,
-                "value": c.value,
-                "domain": c.domain or ".ozon.ru",
-                "path": c.path or "/",
-                "expires": c.expires or -1,
-                "httpOnly": False,
-                "secure": bool(c.secure),
-                "sameSite": "Lax",
-            }
-            for c in self._http.cookies.jar
-        ]
-        self._state.write_text(
-            json.dumps({"cookies": cookies, "origins": previous.get("origins", [])}, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+                logger.debug("cookie sync error", exc_info=True)
 
     def close(self) -> None:
         with self._lock:
@@ -285,5 +316,11 @@ class OzonSession:
     # -- helpers -------------------------------------------------------------
     @staticmethod
     def is_authenticated(data: dict[str, Any]) -> bool:
+        """Look for a positive signal.
+
+        The anonymous widgets (``profileMenuAnonymous``, ``loginButton``) ship in
+        the payload even for a signed-in account, so their presence proves
+        nothing; a personal widget does.
+        """
         blob = str(data.get("widgetStates") or {})
-        return not any(marker in blob for marker in _ANONYMOUS_MARKERS)
+        return any(marker in blob for marker in ("myOrdersList", "orderList", "profileMenuUser", "userAdultModal"))

@@ -14,3 +14,12 @@ class WritesDisabledError(OzonError):
         super().__init__(
             "Account-mutating tools are disabled. Set OZON_ENABLE_WRITES=1 to allow cart / favorites / list changes."
         )
+
+
+class OrdersDisabledError(OzonError):
+    """Placing an order is gated separately from other writes: it spends money
+    and cannot be undone through this server.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("Order placement is disabled; set OZON_ENABLE_ORDERS=1 to allow it.")
