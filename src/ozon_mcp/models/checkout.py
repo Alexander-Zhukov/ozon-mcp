@@ -92,8 +92,17 @@ class TotalRow(OzonModel):
 
 
 class Totals(OzonModel):
+    """The money breakdown.
+
+    ``total`` is what Ozon charges *today*, which is 0 ₽ on a pay-on-delivery
+    order — so ``order_total`` carries what the order actually costs. They differ
+    whenever payment is deferred or split, and a caller quoting the wrong one
+    tells the user the order is free.
+    """
+
     rows: list[TotalRow] = Field(default_factory=list)
     total: str | None = None
+    order_total: str | None = None
     note: str | None = None
 
 
@@ -128,6 +137,7 @@ class OrderPlaced(OzonModel):
 
     order_number: str | None = None
     total: str | None = None
+    order_total: str | None = None
     link: str | None = None
     payment_url: str | None = None
 
@@ -145,11 +155,16 @@ class CancelReason(OzonModel):
 
 
 class OrderCancelled(OzonModel):
-    """Result of a cancellation, with what Ozon reported back."""
+    """Result of a cancellation, with what Ozon reported back.
+
+    ``skus`` is empty when the whole order was cancelled, and lists the lines
+    when only part of it was — an order can be cancelled item by item.
+    """
 
     order_number: str
     cancelled: bool = False
     reason_id: str | None = None
+    skus: list[str] = Field(default_factory=list)
     returned_to_cart: bool = False
     detail: str | None = None
 

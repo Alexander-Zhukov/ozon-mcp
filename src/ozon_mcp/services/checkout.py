@@ -323,6 +323,7 @@ def place_order(confirm_total: str) -> OrderPlaced:
             return OrderPlaced(
                 order_number=number.group(1) if number else None,
                 total=actual,
+                order_total=checkout.totals.order_total,
                 link=back or None,
                 payment_url=link or None,
             )

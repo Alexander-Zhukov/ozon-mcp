@@ -313,18 +313,26 @@ async def list_cancel_reasons(order: str) -> list[CancelReason]:
 @mcp.tool()
 async def cancel_order(
     order: str,
+    skus: list[str] | None = None,
     reason_id: str = "504",
     comment: str = "",
     return_to_cart: bool = True,
 ) -> OrderCancelled:
-    """[GATED] Cancel an order by number ("44563249-0865"), by default returning
+    """[GATED] Cancel an order by number ("44563249-0877"), by default returning
     its items to the cart.
+    skus cancels only those lines and leaves the rest of the order standing — an
+    order can be cancelled item by item, in as many passes as it has items. Omit
+    it to cancel the whole order. The selection is checked against what Ozon
+    reports back and refused on a mismatch, since cancelling the wrong line is
+    not undoable.
     reason_id from list_cancel_reasons; "504" (изменить заказ и оформить заново)
     is the neutral default, "508" needs a comment.
     Check `cancelled` in the result — Ozon may answer with a retention offer
-    instead of cancelling, and `detail` then carries what it asked.
+    instead, and `detail` then carries what it asked.
     """
-    return await run_blocking(lambda: orders.cancel_order(order, reason_id, comment, return_to_cart=return_to_cart))
+    return await run_blocking(
+        lambda: orders.cancel_order(order, skus, reason_id, comment, return_to_cart=return_to_cart)
+    )
 
 
 # ── session ──────────────────────────────────────────────────────────────────
