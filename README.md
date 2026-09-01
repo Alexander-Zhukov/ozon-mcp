@@ -53,7 +53,7 @@ a persistent browser profile seeded by one interactive login.
 | `pay_order` | Charge an order left unpaid; returns the page where Ozon completes it |
 | `place_order` | **Spends money** — submit, waiting until the order exists (gated by `OZON_ENABLE_ORDERS`) |
 | `list_cancel_reasons` | Reasons Ozon accepts for cancelling an order |
-| `cancel_order` | Cancel an order, returning items to the cart (gated) |
+| `cancel_order` | Cancel an order, or just some of its items, returning them to the cart (gated) |
 | `session_status` | Whether the stored session still acts as the account |
 | `start_login` / `submit_login_code` | Restore a dead session with a one-time code |
 | `get_finances` | Ozon Card balance and total points |

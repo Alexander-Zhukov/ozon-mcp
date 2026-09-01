@@ -124,7 +124,65 @@ def _typed(params: dict[str, Any]) -> dict[str, Any]:
     return typed
 
 
-def _reasons_modal(order: str) -> tuple[str, dict[str, Any]]:
+def _postings(state: Any) -> list[tuple[str, str]]:
+    """``(posting id, product title)`` for each cancellable line of the order."""
+    lines: list[tuple[str, str]] = []
+    for item in (state.get("items") if isinstance(state, dict) else None) or []:
+        if not isinstance(item, dict) or item.get("type") != "monoposting":
+            continue
+        body = item.get("monoposting") or {}
+        current = ((body.get("action") or {}).get("params") or {}).get("Current")
+        if current:
+            lines.append((str(current), str(body.get("subtitle") or "")))
+    return lines
+
+
+def _select_postings(order: str, modal: str, skus: list[str]) -> dict[str, Any]:
+    """Tick only the lines holding ``skus``, and prove that is what got ticked.
+
+    Ozon identifies a line by its own posting id, not by sku, and the modal
+    names the product only as a truncated title. So the choice is made by title
+    and then checked against the ItemIds Ozon reports back — cancelling the
+    wrong item of an order is not something to leave to a string match.
+    """
+    from ozon_mcp.services.catalog import order_products  # ruff: ignore[import-outside-top-level] - avoids a cycle
+
+    session = get_session()
+    titles = {product.sku: (product.title or "") for product in order_products(order)}
+    unknown = [sku for sku in skus if sku not in titles]
+    if unknown:
+        msg = f"order {order} does not contain {', '.join(unknown)}"
+        raise OzonError(msg)
+
+    state = widget(session.fetch(modal, backend="entrypoint"), "cancelPostingsRms") or {}
+    lines = _postings(state)
+    if not lines:
+        msg = f"order {order} exposes no cancellable lines"
+        raise OzonError(msg)
+
+    wanted: list[str] = []
+    for sku in skus:
+        title = titles[sku]
+        match = next((pid for pid, subtitle in lines if subtitle and title.startswith(subtitle[:20])), None)
+        if match is None:
+            msg = f"could not find the line for {sku} in order {order}"
+            raise OzonError(msg)
+        wanted.append(match)
+
+    selected: dict[str, Any] = {}
+    for posting in wanted:
+        selected = session.post_page(modal, {"Current": posting}, backend="entrypoint")
+
+    button = (widget(selected, "cancelPostingsRms") or {}).get("button") or {}
+    action = button.get("action") or (button.get("common") or {}).get("action") or {}
+    chosen = re.findall(r"\d{6,}", str((action.get("params") or {}).get("ItemIds") or ""))
+    if set(chosen) != set(skus):
+        msg = f"Ozon selected {chosen or 'nothing'} instead of {skus}; refusing to cancel"
+        raise OzonError(msg)
+    return selected
+
+
+def _reasons_modal(order: str, skus: list[str] | None = None) -> tuple[str, dict[str, Any]]:
     """Reach the reasons step, whichever way this order gets there.
 
     Ozon takes two routes depending on the order's state. A confirmed order goes
@@ -150,8 +208,11 @@ def _reasons_modal(order: str) -> tuple[str, dict[str, Any]]:
 
     # Load the form before acting on it: Ozon builds the per-order form on that
     # GET, and posting into one it has not built answers with an empty widget.
-    session.fetch(entry, backend="entrypoint")
-    selected = session.post_page(entry, {"SelectAll": "True", "selectedIds": "[]"}, backend="entrypoint")
+    if skus:
+        selected = _select_postings(order, entry, skus)
+    else:
+        session.fetch(entry, backend="entrypoint")
+        selected = session.post_page(entry, {"SelectAll": "True", "selectedIds": "[]"}, backend="entrypoint")
     button = (widget(selected, "cancelPostingsRms") or {}).get("button") or {}
     action = button.get("action") or (button.get("common") or {}).get("action") or {}
     if not action.get("link"):
@@ -219,6 +280,7 @@ def _action_in(node_source: Any, needle: str) -> dict[str, Any] | None:
 
 def cancel_order(
     order: str,
+    skus: list[str] | None = None,
     reason_id: str = "504",
     comment: str = "",
     return_to_cart: bool = True,
@@ -242,7 +304,7 @@ def cancel_order(
         raise OzonError(msg)
 
     session = get_session()
-    link, params = _reasons_modal(order)
+    link, params = _reasons_modal(order, skus)
     state = {"IsCheckboxChecked": return_to_cart, "Parameters": _typed(params), "Comment": comment}
     chosen = session.post_page(
         link,
@@ -283,6 +345,7 @@ def cancel_order(
         order_number=order,
         cancelled=ok,
         reason_id=reason_id,
+        skus=skus or [],
         returned_to_cart=return_to_cart and ok,
         detail=None if ok else f"Ozon replied {result.get('_httpStatus')}",
     )

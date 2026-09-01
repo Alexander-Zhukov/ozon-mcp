@@ -290,14 +290,25 @@ def parse_totals(state: Any) -> Totals:
     footer_raw = summary.get("footer")
     footer: dict[str, Any] = footer_raw if isinstance(footer_raw, dict) else {}
     note = None
+    order_total = None
     for row in summary.get("footerPrices") or []:
         if not isinstance(row, dict):
             continue
         left, right = row.get("left") or {}, row.get("right") or {}
-        note = " ".join(
-            filter(None, (_text(left.get("title")), _text(left.get("subtitle")), _text(right.get("price"))))
-        )
-    return Totals(rows=rows, total=_plain(_text(footer.get("price"))), note=note or None)
+        title = _text(left.get("title"))
+        price = _plain(_text(right.get("price")))
+        note = " ".join(filter(None, (title, _text(left.get("subtitle")), price)))
+        # Ozon labels the whole-order figure separately from today's charge.
+        if title and "всего заказа" in title.lower():
+            order_total = price
+    today = _plain(_text(footer.get("price")))
+    return Totals(
+        rows=rows,
+        total=today,
+        # With nothing deferred the two coincide, and Ozon prints only one.
+        order_total=order_total or today,
+        note=note or None,
+    )
 
 
 def parse_checkout(data: dict[str, Any]) -> Checkout:
