@@ -4,6 +4,19 @@ Notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/).
 
+## [1.2.1] - 2026-09-02
+
+### Fixed
+
+- Search phrases were escaped twice, so any query with non-ASCII characters
+  reached Ozon as nonsense — "тунец" as `%25D1%2582…` — and Ozon answered it with
+  whatever it liked: car accessories, for canned tuna. 1.2.0 added the escaping
+  in the service without noticing that the transport escapes the path as well.
+  The transport now leaves `%` alone, and the phrase is escaped once, at the one
+  place that knows it is a value.
+- `get_search_filters` and the purchase-history search did not escape the phrase
+  at all: one holding `&` detached into a parameter of its own.
+
 ## [1.2.0] - 2026-09-02
 
 ### Fixed

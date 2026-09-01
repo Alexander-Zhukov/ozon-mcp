@@ -106,7 +106,10 @@ def search(
     for offset in range(_MAX_SEARCH_PAGES):
         url = f"{base}?page={page + offset}"
         if query:
-            url += f"&text={quote(query)}"
+            # Escaped here rather than by the transport, which leaves & and =
+            # alone: a phrase holding one of those would otherwise detach into a
+            # parameter of its own.
+            url += f"&text={quote(query, safe='')}"
         if value:
             url += f"&sorting={value}"
         # Two mechanisms, and which one a query gets is Ozon's business: some
@@ -130,7 +133,8 @@ def search(
 def get_search_filters(query: str) -> list[SearchFilter]:
     return parse.parse_filters(
         get_session().fetch(
-            f"/search/?text={query}&layout_container=filtersDesktop&layout_page_index=2", backend="entrypoint"
+            f"/search/?text={quote(query, safe='')}&layout_container=filtersDesktop&layout_page_index=2",
+            backend="entrypoint",
         )
     )
 
@@ -336,7 +340,7 @@ def purchases(query: str | None = None, limit: int = 100, sort: str = "newest") 
     than paginating the whole list, so a query switches to it.
     """
     if query:
-        return _paginate_tiles(f"/my/purchases/search?text={query}", limit, backend="entrypoint")
+        return _paginate_tiles(f"/my/purchases/search?text={quote(query, safe='')}", limit, backend="entrypoint")
     value = PURCHASE_SORTS.get(sort, sort)
     path = f"/my/favorites/list?list={PURCHASES_LIST_ID}" + (f"&sorting={value}" if value else "")
     return _paginate_tiles(path, limit)

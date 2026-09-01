@@ -426,9 +426,16 @@ class OzonSession:
         return data
 
     def fetch(self, path: str, backend: Backend = "composer") -> dict[str, Any]:
-        """Fetch a page's JSON by on-site path. backend: composer | entrypoint."""
+        """Fetch a page's JSON by on-site path. backend: composer | entrypoint.
+
+        ``%`` is left alone, so a caller that had to escape a value — a search
+        phrase, which may hold ``&`` — hands over an already-encoded path and
+        gets it through intact. Escaping it again turned "тунец" into
+        ``%25D1%2582…``, and Ozon answered that nonsense query with whatever it
+        felt like: car accessories, for canned tuna.
+        """
         base = ENTRYPOINT_URL if backend == "entrypoint" else COMPOSER_URL
-        return self._request("GET", base + quote(path, safe="/?=&"), backend=backend)
+        return self._request("GET", base + quote(path, safe="/?=&%"), backend=backend)
 
     def post_page(self, path: str, body: object, backend: Backend = "composer") -> dict[str, Any]:
         """POST a page-level command and get the refreshed page back.
