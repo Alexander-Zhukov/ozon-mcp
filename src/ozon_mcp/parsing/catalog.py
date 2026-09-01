@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
@@ -28,6 +27,7 @@ from ozon_mcp.parsing.common import (
     widget,
     widget_with,
 )
+from ozon_mcp.utils.serde import dumps, loads
 
 
 def _tile_title(item: dict[str, Any]) -> str | None:
@@ -77,7 +77,7 @@ def _tile_prices(item: dict[str, Any]) -> tuple[str | None, str | None]:
             first = str(current).strip() if isinstance(current, str) else None
             second = str(original).strip() if isinstance(original, str) else None
             return (first or None, second or None)
-    found: list[str] = [str(match) for match in PRICE_RE.findall(json.dumps(item, ensure_ascii=False))]
+    found: list[str] = [str(match) for match in PRICE_RE.findall(dumps(item))]
     return (found[0] if found else None, found[1] if len(found) > 1 else None)
 
 
@@ -95,7 +95,7 @@ def parse_tiles(data: dict[str, Any]) -> list[Tile]:
         declared = item.get("sku") or item.get("skuId") or item.get("id")
         sku = str(declared) if declared and str(declared).isdigit() else None
         if sku is None:
-            found = re.search(r"/product/[a-z0-9\-]+-(\d{6,})/", json.dumps(item, ensure_ascii=False))
+            found = re.search(r"/product/[a-z0-9\-]+-(\d{6,})/", dumps(item))
             sku = found.group(1) if found else None
         price, price_old = _tile_prices(item)
         tiles.append(
@@ -112,9 +112,7 @@ def parse_tiles(data: dict[str, Any]) -> list[Tile]:
 
 def parse_gallery(data: dict[str, Any]) -> list[str]:
     """All product photo URLs (webGallery + webListPhotos covers)."""
-    blob = json.dumps(widget(data, "webGallery") or {}, ensure_ascii=False) + json.dumps(
-        widget(data, "webListPhotos") or {}, ensure_ascii=False
-    )
+    blob = dumps(widget(data, "webGallery") or {}) + dumps(widget(data, "webListPhotos") or {})
     return list(dict.fromkeys(IMAGE_RE.findall(blob)))
 
 
@@ -226,7 +224,7 @@ def parse_description(sku: str, data: dict[str, Any]) -> Description:
     rich = state.get("richAnnotationJson")
     if isinstance(rich, str):
         try:
-            rich = json.loads(rich)
+            rich = loads(rich)
         except ValueError:
             rich = None
     if rich:
@@ -238,7 +236,7 @@ def parse_description(sku: str, data: dict[str, Any]) -> Description:
 
     joined = re.sub(r"<[^>]+>", " ", " ".join(dict.fromkeys(chunk for chunk in chunks if len(chunk) > 3)))
     joined = re.sub(r"\s+", " ", joined).strip()
-    images = list(dict.fromkeys(IMAGE_RE.findall(json.dumps(state, ensure_ascii=False))))
+    images = list(dict.fromkeys(IMAGE_RE.findall(dumps(state))))
     return Description(sku=sku, description=joined or None, images=images)
 
 

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import base64
 import datetime
-import json
 import re
 from typing import Any, Final
 
 from ozon_mcp.models.orders import Order, OrderProduct, OrderThumbnail
 from ozon_mcp.parsing.common import find_all, prices, walk, widget, widgets_all
+from ozon_mcp.utils.serde import loads
 
 _RU_MONTHS: Final = {
     "январ": 1,
@@ -37,7 +37,7 @@ def order_ids_from_link(link: str | None) -> list[int]:
         return []
     try:
         token = match.group(1) + "=" * (-len(match.group(1)) % 4)
-        decoded = json.loads(base64.urlsafe_b64decode(token))
+        decoded = loads(base64.urlsafe_b64decode(token))
         return [int(x) for x in decoded.get("orderIds", [])]
     except (ValueError, TypeError):
         return []
@@ -55,7 +55,7 @@ def order_numbers_from_link(link: str | None) -> list[str]:
         return []
     try:
         token = match.group(1) + "=" * (-len(match.group(1)) % 4)
-        postings = json.loads(base64.urlsafe_b64decode(token)).get("postings", [])
+        postings = loads(base64.urlsafe_b64decode(token)).get("postings", [])
     except (ValueError, TypeError):
         return []
     numbers: list[str] = []

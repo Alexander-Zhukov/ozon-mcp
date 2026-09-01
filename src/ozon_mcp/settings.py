@@ -38,6 +38,22 @@ class OzonSettings(BaseSettings):
     monitor_store: Path = Path("/data/price_history.json")
     """Where favorites price-monitoring snapshots are persisted."""
 
+    request_timeout: float = 30.0
+    """Seconds to wait for one HTTP call to Ozon."""
+
+    request_attempts: int = 3
+    """How many times one call is attempted before it is reported as failed."""
+
+    retry_backoff_seconds: float = 1.0
+    """Base wait between attempts; doubled per attempt and jittered."""
+
+    retry_cap_seconds: float = 20.0
+    """Longest this server waits before a retry, including a Retry-After Ozon
+    asked for — an hour-long Retry-After must not hang a tool call."""
+
+    browser_timeout: float = 60.0
+    """Seconds to wait for a browser navigation or a login step."""
+
     idle_seconds: int = 600
     """Close the idle browser after this long; HTTP session stays alive."""
 

@@ -8,9 +8,10 @@ churn.
 
 from __future__ import annotations
 
-import json
 import re
 from typing import TYPE_CHECKING, Any
+
+from ozon_mcp.utils.serde import dumps, loads
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -62,7 +63,7 @@ def state_by_layout(data: dict[str, Any], component: str, **params: str) -> Any:
         if entry.get("component") != component:
             continue
         try:
-            declared = json.loads(entry.get("params") or "{}")
+            declared = loads(entry.get("params") or "{}")
         except (ValueError, TypeError):
             declared = {}
         if any(str(declared.get(key)) != value for key, value in params.items()):
@@ -71,7 +72,7 @@ def state_by_layout(data: dict[str, Any], component: str, **params: str) -> Any:
         if raw is None:
             continue
         try:
-            return json.loads(raw) if isinstance(raw, str) else raw
+            return loads(raw) if isinstance(raw, str) else raw
         except (ValueError, TypeError):
             return None
     return None
@@ -100,7 +101,7 @@ def widgets_all(data: dict[str, Any], prefix: str) -> list[Any]:
     for key, raw in (data.get("widgetStates") or {}).items():
         if key.split("-", 1)[0] == prefix or key.startswith(prefix):
             try:
-                out.append(json.loads(raw) if isinstance(raw, str) else raw)
+                out.append(loads(raw) if isinstance(raw, str) else raw)
             except (ValueError, TypeError):
                 continue
     return out
@@ -129,7 +130,7 @@ def find_all(node: Any, key: str) -> list[Any]:
 
 
 def prices(node: Any) -> list[str]:
-    return list(dict.fromkeys(PRICE_RE.findall(json.dumps(node, ensure_ascii=False))))
+    return list(dict.fromkeys(PRICE_RE.findall(dumps(node))))
 
 
 def continues_this_list(url: str) -> bool:
@@ -164,7 +165,7 @@ def _rebuilt_next(data: dict[str, Any]) -> str | None:
     current_token = current_token_match.group(1) if current_token_match else None
     index_match = re.search(r"layout_page_index=(\d+)", current)
     index = int(index_match.group(1)) if index_match else 1
-    tokens = re.findall(r"[?&]page=(\d{6,})", json.dumps(data, ensure_ascii=False))
+    tokens = re.findall(r"[?&]page=(\d{6,})", dumps(data))
     next_token = next((token for token in tokens if token != current_token), None)
     if not next_token:
         return None

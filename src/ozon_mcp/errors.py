@@ -7,6 +7,44 @@ class OzonError(RuntimeError):
     """Base class for errors this server raises to the caller."""
 
 
+class UpstreamError(OzonError):
+    """Ozon did not answer with a page this server can read.
+
+    Raised instead of returning an empty one, because the two are
+    indistinguishable downstream: every parser turns a page with no widgets into
+    an empty list, so a 502 or a timeout used to surface as "you have no orders".
+    """
+
+    def __init__(self, status: int, detail: str = "") -> None:
+        self.status = status
+        described = f"HTTP {status}" if status else "no response"
+        super().__init__(
+            (
+                f"Ozon did not return a readable page ({described}). Nothing was read, and this is not an "
+                f"empty account — retry, and if it persists check whether the session or the network is at "
+                f"fault. {detail}"
+            ).strip()
+        )
+
+
+class RateLimitedError(UpstreamError):
+    """Ozon is rate-limiting this session.
+
+    Kept apart from other upstream failures because the answer is different:
+    waiting helps, and the wait is the one Ozon asked for.
+    """
+
+    def __init__(self, retry_after: float | None = None) -> None:
+        self.retry_after = retry_after
+        waited = f" It asked to wait {retry_after:.0f}s." if retry_after else ""
+        OzonError.__init__(
+            self,
+            f"Ozon is rate-limiting this session (HTTP 429) and the retries did not clear it.{waited} "
+            "Nothing was read. Slow down or try again later.",
+        )
+        self.status = 429
+
+
 class WritesDisabledError(OzonError):
     """Raised when a mutating tool is called while writes are disabled."""
 
