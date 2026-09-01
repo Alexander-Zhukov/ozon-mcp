@@ -107,7 +107,9 @@ def _reasons_modal(order: str) -> tuple[str, dict[str, Any]]:
     """Select every parcel, then open the reasons step it unlocks."""
     session = get_session()
     modal = _cancel_postings_modal(order)
-    selected = session.post_page(modal, {"SelectAll": "True", "selectedIds": "[]"})
+    # The modal is an entrypoint page: posting to composer answers with a page
+    # that has selected nothing, which reads as "nothing cancellable".
+    selected = session.post_page(modal, {"SelectAll": "True", "selectedIds": "[]"}, backend="entrypoint")
     button = (widget(selected, "cancelPostingsRms") or {}).get("button") or {}
     action = button.get("action") or (button.get("common") or {}).get("action") or {}
     if not action.get("link"):
@@ -157,6 +159,12 @@ def cancel_order(
     Ozon inserts a retention screen between the reason and the cancellation, so
     the confirming action is taken from the response rather than assumed — that
     screen is why choosing a reason alone leaves the order alive.
+
+    **Known gap:** the reason step currently answers with an empty shell rather
+    than that screen, so this returns ``cancelled=False`` with what Ozon said
+    instead of finishing. The final call is ``v2/cancelOrderRms`` and needs the
+    numeric ``OrderId``, which none of the reachable payloads expose. Cancelling
+    through the site works; automating it does not yet.
     """
     _require_writes()
     if reason_id == _NEEDS_COMMENT_REASON and not comment.strip():
@@ -173,6 +181,7 @@ def cancel_order(
     chosen = session.post_page(
         link,
         {"ReasonId": reason_id, "state": json.dumps(state_payload, ensure_ascii=False)},
+        backend="entrypoint",
     )
 
     confirm = next(

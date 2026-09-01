@@ -6,7 +6,7 @@ import pytest
 
 from ozon_mcp.errors import OzonError
 from ozon_mcp.models.checkout import PaymentOption
-from ozon_mcp.services.checkout import _match_payment
+from ozon_mcp.services.checkout import _match_payment_option
 
 OPTIONS = [
     PaymentOption(payment_type=1626, kind="FastPaymentSystem"),
@@ -30,9 +30,9 @@ OPTIONS = [
     ],
 )
 def test_match_payment_accepts_words_and_cards(wanted: str, expected: int) -> None:
-    assert _match_payment(OPTIONS, wanted) == expected
+    assert _match_payment_option(OPTIONS, wanted).payment_type == expected
 
 
 def test_match_payment_reports_options_when_unknown() -> None:
     with pytest.raises(OzonError, match="available:"):
-        _match_payment(OPTIONS, "биткоин")
+        _match_payment_option(OPTIONS, "биткоин")

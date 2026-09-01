@@ -31,6 +31,8 @@ from ozon_mcp.parsing.orders import order_numbers_from_link, parse_order_product
 if TYPE_CHECKING:
     from ozon_mcp.models.orders import OrderProduct
 
+_MAX_TILE_PAGES = 200
+
 _ORDER_NUMBER_RE = re.compile(r"\d{6,}-\d{3,}")
 
 _DELIVERY_JS = r"""() => {
@@ -179,11 +181,18 @@ def order_products(order: str) -> list[OrderProduct]:
 
 
 def _paginate_tiles(path: str, limit: int, backend: str = "composer") -> list[Tile]:
+    """Walk a scroll-paginated tile list.
+
+    A page that comes back empty is retried once before the walk ends: an
+    upstream hiccup looks exactly like the end of the list from here, and
+    treating it as the end silently returns a short list that the caller has no
+    way to tell from a complete one.
+    """
     session = get_session()
     tiles: list[Tile] = []
     seen: set[str] = set()
     data = session.fetch(path, backend=backend)
-    for _ in range(200):
+    for _ in range(_MAX_TILE_PAGES):
         for tile in parse.parse_tiles(data):
             if tile.sku and tile.sku not in seen:
                 seen.add(tile.sku)
@@ -192,6 +201,8 @@ def _paginate_tiles(path: str, limit: int, backend: str = "composer") -> list[Ti
         if len(tiles) >= limit or not following:
             break
         data = session.fetch(following, backend="entrypoint")
+        if not parse.parse_tiles(data):
+            data = session.fetch(following, backend="entrypoint")
     return tiles[:limit]
 
 

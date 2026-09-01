@@ -164,6 +164,12 @@ make check-all   # ruff format-check + ruff lint + ty typecheck + pytest
 - **Per-shipment destinations are handled but unverified.** An order can split
   into shipments with their own addresses; that path is covered by construction
   and by a unit test, not against a live multi-destination order.
+- **Paying by card is not finished.** `place_order` creates the order, but Ozon
+  then wants a payment authorisation step that is not implemented, leaving it
+  "Ожидаем оплаты". Pay-on-delivery completes fully.
+- **Cancelling is not automated.** `cancel_order` walks Ozon's chain up to the
+  reason, then stops: the confirming call needs an internal order id that none
+  of the reachable payloads expose. Cancel through the site meanwhile.
 - **Placing an order spends real money** and is gated separately from every
   other write, behind `OZON_ENABLE_ORDERS`.
 

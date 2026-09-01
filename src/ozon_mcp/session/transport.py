@@ -281,14 +281,19 @@ class OzonSession:
         base = ENTRYPOINT_URL if backend == "entrypoint" else COMPOSER_URL
         return self._request("GET", base + quote(path, safe="/?=&"), backend=backend)
 
-    def post_page(self, path: str, body: object) -> dict[str, Any]:
+    def post_page(self, path: str, body: object, backend: Backend = "composer") -> dict[str, Any]:
         """POST a page-level command and get the refreshed page back.
 
-        Some controls (the cart checkboxes) are not ``_action`` endpoints: the
-        site posts a command to the page's own JSON URL and re-renders from the
-        response.
+        Some controls are not ``_action`` endpoints: the site posts to the
+        page's own JSON URL and re-renders from the response. Which backend
+        serves it depends on the page — the cart posts to composer, the checkout
+        to entrypoint — and posting to the wrong one silently changes nothing.
         """
-        return self._request("POST", COMPOSER_URL + quote(path, safe="/?=&"), body=body)
+        base = ENTRYPOINT_URL if backend == "entrypoint" else COMPOSER_URL
+        # The inner path is a *value* of the endpoint's url= parameter, so its
+        # own query has to be escaped: left raw, its parameters detach and act
+        # on the endpoint instead, and the command silently does nothing.
+        return self._request("POST", base + quote(path, safe="/"), body=body, backend=backend)
 
     def widget_state(self, state_id: str, async_data: str) -> dict[str, Any]:
         """Fill one lazily-loaded widget by naming its state.

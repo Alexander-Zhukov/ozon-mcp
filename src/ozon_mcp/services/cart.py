@@ -60,7 +60,13 @@ def get_cart() -> Cart:
         page = parse_cart(data)
         fresh = [item for item in page.items if item.id and item.id not in seen]
         if not fresh:
-            break
+            # An empty page reads the same as the end of the cart, so ask once
+            # more before believing it.
+            data = session.fetch(following, backend="entrypoint")
+            page = parse_cart(data)
+            fresh = [item for item in page.items if item.id and item.id not in seen]
+            if not fresh:
+                break
         seen.update(item.id for item in fresh)
         cart.items += fresh
         cart.groups += [g for g in page.groups if g not in cart.groups]

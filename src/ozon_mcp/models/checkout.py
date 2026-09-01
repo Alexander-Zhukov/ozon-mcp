@@ -18,6 +18,7 @@ class PaymentOption(OzonModel):
     label: str | None = None
     kind: str | None = None
     selected: bool | None = None
+    apply_link: str | None = None
 
 
 class DeliveryPart(OzonModel):
@@ -82,6 +83,7 @@ class PayAfterReceipt(OzonModel):
     enabled: bool = False
     label: str | None = None
     prepayment: str | None = None
+    toggle_link: str | None = None
 
 
 class TotalRow(OzonModel):

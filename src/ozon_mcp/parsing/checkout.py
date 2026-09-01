@@ -54,9 +54,18 @@ def _plain(value: str | None) -> str | None:
 
 
 def _link(node: dict[str, Any]) -> str:
-    action = node.get("action")
-    link = action.get("link") if isinstance(action, dict) else None
-    return link if isinstance(link, str) else ""
+    """The link of a node's action, wherever Ozon hung it.
+
+    Rows put their action directly on the node; controls inside a row put it
+    under ``common``. Checking only one of the two reads as "no action" and
+    makes a control silently do nothing.
+    """
+    for holder in (node, node.get("common") if isinstance(node.get("common"), dict) else {}):
+        action = holder.get("action") if isinstance(holder, dict) else None
+        link = action.get("link") if isinstance(action, dict) else None
+        if isinstance(link, str) and link:
+            return link
+    return ""
 
 
 def parse_payment_options(state: Any) -> list[PaymentOption]:
@@ -71,6 +80,7 @@ def parse_payment_options(state: Any) -> list[PaymentOption]:
             label=_text(node.get("title")),
             kind=node.get("automatizationDescription"),
             selected=node.get("isSelected"),
+            apply_link=_link(node),
         )
         key = (option.payment_type, option.label)
         if key not in seen:
@@ -90,14 +100,20 @@ def _payment_note(state: Any, needle: str) -> str | None:
 
 
 def parse_pay_after_receipt(state: Any) -> PayAfterReceipt:
-    """The pay-on-delivery switch: its checkbox state and the prepayment note."""
+    """The pay-on-delivery switch: its checkbox state and the link that flips it.
+
+    The link is not a stable toggle — Ozon renames the parameter with the state
+    (``post_payment_disabled=0`` while on, ``post_payment_enabled=0`` while off)
+    — so it has to be read from the current payload rather than assumed.
+    """
     for node in walk(state):
         title = (
             _text((node.get("centerBlock") or {}).get("title")) if isinstance(node.get("centerBlock"), dict) else None
         )
         if not title or "после получения" not in title.lower():
             continue
-        control = (node.get("leftBlock") or {}).get("control") if isinstance(node.get("leftBlock"), dict) else None
+        left = node.get("leftBlock") if isinstance(node.get("leftBlock"), dict) else {}
+        control = left.get("control") if isinstance(left, dict) else None
         status = ((control or {}).get("checkbox") or {}).get("status") if isinstance(control, dict) else None
         texts: list[str] = [t for t in find_all(state, "text") if isinstance(t, str)]
         return PayAfterReceipt(
@@ -105,6 +121,7 @@ def parse_pay_after_receipt(state: Any) -> PayAfterReceipt:
             enabled=status == "SELECTED",
             label=_plain(title),
             prepayment=next((_plain(t) for t in texts if "предоплата" in t.lower()), None),
+            toggle_link=_link(left if isinstance(left, dict) else {}) or None,
         )
     return PayAfterReceipt()
 
@@ -231,11 +248,16 @@ def parse_points(state: Any) -> list[PointsOption]:
         label = _text(tab.get("title")) or _text(tab)
         common = tab.get("common") if isinstance(tab.get("common"), dict) else {}
         link = _link(common)
-        amount_match = _POINTS_RE.search(link) or (_DIGITS_RE.search(label or "") if label else None)
+        # The amount is in the link when Ozon offers one ("points_applied=100.00")
+        # and only in the label otherwise ("Списать 100"); the two patterns
+        # capture differently, so they are read apart rather than together.
+        from_link = _POINTS_RE.search(link)
+        from_label = _DIGITS_RE.search(label or "") if label else None
+        amount = float(from_link.group(1)) if from_link else (float(from_label.group(0)) if from_label else None)
         options.append(
             PointsOption(
                 label=label,
-                amount=int(float(amount_match.group(1))) if amount_match else None,
+                amount=int(amount) if amount is not None else None,
                 selected=index == selected_index,
                 apply_link=link or None,
             )
