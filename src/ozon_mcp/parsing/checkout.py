@@ -34,6 +34,10 @@ _DIGITS_RE = re.compile(r"\d+")
 _TAG_RE = re.compile(r"<[^>]+>")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 _RECIPIENT_ACTION = "editAddressAndRecipient"
+# The destination cell is the one drawn with a location pin; the recipient cell
+# looks the same but carries a profile icon.
+_ADDRESS_ICON = "ic_m_location_pin_filled"
+_ADDRESS_BOOK = "miniaddressbook"
 # How Ozon names instalments among the payment methods it declares.
 _INSTALMENT_KIND = "OzonCredit"
 _SPLIT_KEY_RE = re.compile(r"split_key=([A-Za-z0-9\-]+)")
@@ -262,26 +266,44 @@ def pickup_apply_link(state: Any, address_book_id: str) -> str | None:
     return None
 
 
+def _address_cell(state: Any) -> dict[str, Any]:
+    """The cell showing where the order goes, found by the pin it is drawn with.
+
+    The recipient sits in a cell of the same shape right below it, so the two
+    are told apart by their icons rather than by what their text looks like.
+    """
+    for node in walk(state):
+        icon = json.dumps(node.get("leftBlock") or {}, ensure_ascii=False)
+        if _ADDRESS_ICON in icon and isinstance(node.get("centerBlock"), dict):
+            return node
+    return {}
+
+
 def parse_delivery(state: Any) -> Delivery:
+    """Where this part of the order goes, and how.
+
+    The mode is a tag list, and the selected tag is the mode — no guessing from
+    the wording. The address cell states the point and, after a ``<br>``, how
+    long it keeps a parcel: Ozon writes them in that order, so they are taken by
+    position. Deciding which half was which by looking for "хранение" broke on
+    a courier address, which has no storage term but does have a flat and a
+    floor.
+    """
     mode, change_link = None, None
     for node in walk(state):
         link = _link(node)
-        if "miniaddressbook" in link:
+        if _ADDRESS_BOOK in link:
             change_link = change_link or link
             if node.get("isSelected"):
                 mode = _text(node)
-    texts: list[str] = [t for t in find_all(state, "text") if isinstance(t, str) and t.strip()]
-    # Ozon puts the pickup label, the street address and the storage term in one
-    # <br>-separated blob.
-    blob = next((t for t in texts if _BR_RE.search(t)), None)
-    pieces = [_plain(piece) for piece in _BR_RE.split(blob)] if blob else []
+    center: dict[str, Any] = _address_cell(state).get("centerBlock") or {}
+    label = _plain(_text(center.get("title")))
+    pieces = [_plain(piece) for piece in _BR_RE.split(_text(center.get("subtitle")) or "")]
     lines = [piece for piece in pieces if piece]
-    label = next((t for t in texts if t.strip().startswith("Пункт")), None)
-    street = next((line for line in lines if "хранени" not in line.lower()), None)
     return Delivery(
-        mode=mode or next((t for t in texts if t.strip() in {"Самовывоз", "Курьером"}), None),
-        address=", ".join(filter(None, (label, street))) or None,
-        storage=next((line for line in lines if "хранени" in line.lower()), None),
+        mode=mode,
+        address=", ".join(filter(None, (label, lines[0] if lines else None))) or None,
+        storage=" ".join(lines[1:]) or None,
         recipient=_recipient(state),
         change_link=change_link,
     )
