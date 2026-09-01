@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 import threading
 import time
 from typing import TYPE_CHECKING, Any, Final, Self
@@ -78,6 +79,7 @@ class OzonSession:
     def __init__(self, profile_dir: Path | None = None) -> None:
         settings = get_settings()
         self._profile = profile_dir or settings.profile_dir
+        self._backup = settings.profile_backup
         self._seed_state = settings.state_path
         self._impersonate = settings.impersonate
         self._lock = threading.RLock()
@@ -114,6 +116,39 @@ class OzonSession:
         if _ANTIBOT.search((self._page.title() or "").lower()):
             self._close_browser()
             raise RuntimeError("antibot challenge not passed")
+
+    def back_up_profile(self) -> None:
+        """Snapshot a profile that is known to be signed in.
+
+        Some Ozon pages sign the session out — the payment-confirmation page
+        does — and with a persistent profile Chrome writes that logged-out state
+        straight to disk, where no HTTP-side guard can intercept it. Without a
+        copy, recovering costs another one-time code from the account owner.
+        """
+        if not self._profile.exists():
+            return
+        try:
+            if self._backup.exists():
+                shutil.rmtree(self._backup)
+            shutil.copytree(self._profile, self._backup, ignore=shutil.ignore_patterns("Singleton*"))
+            logger.info("backed up the signed-in profile to %s", self._backup)
+        except OSError:
+            logger.warning("could not back up the profile", exc_info=True)
+
+    def restore_profile(self) -> bool:
+        """Put the last signed-in profile back, if one was kept."""
+        if not (self._backup / "Default").exists():
+            return False
+        self._close_browser()
+        try:
+            if self._profile.exists():
+                shutil.rmtree(self._profile)
+            shutil.copytree(self._backup, self._profile)
+        except OSError:
+            logger.warning("could not restore the profile", exc_info=True)
+            return False
+        logger.info("restored the signed-in profile from %s", self._backup)
+        return True
 
     def _clear_stale_lock(self) -> None:
         """Drop a Chromium profile lock left by a killed process.
@@ -166,6 +201,11 @@ class OzonSession:
     def _bootstrap(self, reason: str = "initial") -> None:
         SESSION_BOOTSTRAPS.labels(reason=reason).inc()
         self._launch_browser()
+        if not self._browser_is_signed_in() and self.restore_profile():
+            # A page signed the profile out; put the kept copy back rather than
+            # asking the account owner for another code.
+            SESSION_BOOTSTRAPS.labels(reason="restored").inc()
+            self._launch_browser()
         captured: dict[str, str] = {}
 
         def on_request(request: Any) -> None:
@@ -184,6 +224,14 @@ class OzonSession:
             self._http.cookies.set(cookie["name"], cookie["value"], domain=".ozon.ru")
         self._synced = {c["name"]: c["value"] for c in self._context.cookies() if c["name"] in _SESSION_COOKIES}
         self._last_used = time.time()
+
+    def _browser_is_signed_in(self) -> bool:
+        """Whether the profile still holds a session, judged by its own cookie."""
+        try:
+            user = next((c for c in self._context.cookies() if c["name"] == "__Secure-user-id"), None)
+        except Exception:
+            return False
+        return bool(user and user.get("value") not in {"", _GUEST_USER_ID})
 
     def _ensure_http(self) -> None:
         # The browser is deliberately kept alive: it owns the profile, so closing
