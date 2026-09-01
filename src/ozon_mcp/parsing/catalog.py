@@ -220,20 +220,55 @@ def _facet_options(spec: dict[str, Any]) -> list[FilterOption]:
     return options[:40]
 
 
-_DELIVERY_TERM_RE = re.compile(r"(?:С|с)\s+\d{1,2}\s+\w+|Доставим[^,.]{0,40}|Послезавтра|Завтра|Сегодня")
+# Roles Ozon assigns its own sections in cellTrackingInfo.uis; everything else
+# listed there is a delivery option.
+_ADDRESS_ROLE = "main"
+_RETURN_ROLE = "returnInfo"
+
+
+def _section_lines(section: dict[str, Any]) -> list[str]:
+    """The text lines of a webDelivery section, in the order it renders them."""
+    return [
+        part["content"].strip()
+        for part in section.get("descriptionRs") or []
+        if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("content"), str)
+    ]
+
+
+def _section_key(section: dict[str, Any]) -> str | None:
+    tracking: dict[str, Any] = section.get("trackingInfo") or {}
+    click: dict[str, Any] = tracking.get("click") or {} if isinstance(tracking, dict) else {}
+    key = click.get("key") if isinstance(click, dict) else None
+    return str(key) if key else None
 
 
 def parse_delivery_widget(state: Any) -> dict[str, str | None]:
     """Delivery estimate out of the webDelivery widget state.
 
-    The widget is a list of sections (address, terms, returns); the term is the
-    first date-ish phrase in them, and the address explains what it is relative
-    to — the estimate is meaningless without it.
+    The widget names the role of each section itself: ``cellTrackingInfo.uis``
+    maps a role (``main`` for the chosen address, ``pvz``/``bestDelivery``/… for
+    the delivery options, ``returnInfo`` for returns) to that section's tracking
+    key. Resolving those keys is what makes this read the address and the date
+    Ozon meant, instead of the first phrase on the page that looked like either.
+
+    Each section states its lines in render order: the address section gives the
+    address and then where it ships from, an option gives its name and then when
+    it arrives.
     """
-    texts = [
-        t.strip() for t in find_all(state, "content") + find_all(state, "text") if isinstance(t, str) and t.strip()
-    ]
-    term = next((m.group(0) for text in texts if (m := _DELIVERY_TERM_RE.search(text))), None)
-    address = next((text for text in texts if re.search(r"ул\.|просп|Пункт|д\.\s*\d", text)), None)
-    source = next((text for text in texts if "склад" in text.lower()), None)
-    return {"delivery": term, "address": address, "source": source}
+    if not isinstance(state, dict):
+        return {"delivery": None, "address": None, "source": None}
+    uis = (state.get("cellTrackingInfo") or {}).get("uis") if isinstance(state.get("cellTrackingInfo"), dict) else {}
+    uis = uis if isinstance(uis, dict) else {}
+    sections = [section for section in state.get("sections") or [] if isinstance(section, dict)]
+    by_key = {key: section for section in sections if (key := _section_key(section))}
+
+    address_section = by_key.get(str(uis.get(_ADDRESS_ROLE)))
+    address_lines = _section_lines(address_section) if address_section else []
+    option_keys = [str(key) for role, key in uis.items() if role not in {_ADDRESS_ROLE, _RETURN_ROLE} and key]
+    option_lines = next((lines for key in option_keys if (lines := _section_lines(by_key.get(key) or {}))), [])
+    return {
+        # The option's second line is the estimate; its first names the option.
+        "delivery": option_lines[1] if len(option_lines) > 1 else None,
+        "address": address_lines[0] if address_lines else None,
+        "source": address_lines[1] if len(address_lines) > 1 else None,
+    }

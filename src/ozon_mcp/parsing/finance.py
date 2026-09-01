@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import re
-from typing import Any
+from typing import Any, Final
 
 from ozon_mcp.models.finance import (
     Finances,
@@ -13,18 +12,69 @@ from ozon_mcp.models.finance import (
     SellerBonus,
     SellerBonuses,
 )
-from ozon_mcp.parsing.common import PRICE_RE, PRICE_WITH_KOPECKS_RE, find_all, widget
+from ozon_mcp.parsing.common import find_all, widget
+
+_BALANCE_ACTION: Final = "BankBalance"
+_POINTS_LINK: Final = "/my/points"
+
+
+def _atom(node: Any) -> str | None:
+    """Text of a value that may be a bare string or a ``{"text": …}`` atom."""
+    if isinstance(node, str):
+        return str(node).strip() or None
+    if isinstance(node, dict):
+        text = node.get("text")
+        if isinstance(text, str):
+            return str(text).strip() or None
+        if isinstance(text, dict):
+            return _atom(text)
+    return None
+
+
+def _card_balance(data: dict[str, Any]) -> str | None:
+    """The Ozon Card balance, taken from the card that states it.
+
+    ``actionCards`` is a row of tiles and any of them may carry a price — a
+    cashback teaser, a credit-card offer. Taking the first money-looking string
+    in the widget therefore reads whichever tile Ozon happens to put first. The
+    balance tile names itself in its tracking action (``…_BankBalanceCard``),
+    and that is what is matched.
+    """
+    cards = widget(data, "actionCards") or {}
+    for card in (cards.get("cards") if isinstance(cards, dict) else None) or []:
+        if not isinstance(card, dict):
+            continue
+        tracking = card.get("trackingInfo") if isinstance(card.get("trackingInfo"), dict) else {}
+        actions = [str(entry.get("actionType") or "") for entry in tracking.values() if isinstance(entry, dict)]
+        if any(_BALANCE_ACTION in action for action in actions):
+            return _atom(card.get("subtitle"))
+    return None
+
+
+def _points_total(data: dict[str, Any]) -> str | None:
+    """The points balance from the menu entry that links to the points page.
+
+    Ozon hangs the number on that entry as a notification badge. Anchoring on
+    the link instead of the caption keeps this out of a text window that used to
+    be searched across every widget on the page.
+    """
+    menu = widget(data, "menu") or {}
+    for section in (menu.get("sections") if isinstance(menu, dict) else None) or []:
+        for item in (section.get("items") if isinstance(section, dict) else None) or []:
+            if not isinstance(item, dict):
+                continue
+            action = item.get("action") if isinstance(item.get("action"), dict) else {}
+            if str(action.get("link") or "").rstrip("/") != _POINTS_LINK:
+                continue
+            badge = item.get("notification") if isinstance(item.get("notification"), dict) else {}
+            digits = re.sub(r"\D", "", _atom(badge.get("text")) or "")
+            return digits or None
+    return None
 
 
 def parse_finance(data: dict[str, Any]) -> Finances:
     """Ozon Card balance + total points, from /my/main (actionCards + menu)."""
-    cards = json.dumps(widget(data, "actionCards") or {}, ensure_ascii=False)
-    balance = PRICE_WITH_KOPECKS_RE.findall(cards) or PRICE_RE.findall(cards)
-    all_widgets = json.dumps(data.get("widgetStates") or {}, ensure_ascii=False)
-    points = re.search(r"Баллы и бонусы.{0,250}?(\d[\d\s  ]{2,}\d)", all_widgets)
-    return Finances(
-        ozon_card_balance=balance[0] if balance else None, points=re.sub(r"\D", "", points.group(1)) if points else None
-    )
+    return Finances(ozon_card_balance=_card_balance(data), points=_points_total(data))
 
 
 def parse_points(data: dict[str, Any]) -> Points:

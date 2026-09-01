@@ -79,8 +79,10 @@ class PointsOption(OzonModel):
 class PickupPoint(OzonModel):
     """A saved delivery address / pickup point offered for this order.
 
-    ``available`` is false for points Ozon cannot ship this cart to; those carry
-    the reason in ``note`` and cannot be selected.
+    ``available`` is false for points Ozon cannot ship this cart to, and those
+    cannot be selected. ``note`` is whatever Ozon says about the address for
+    this cart — the reason when it will not ship there, a confirmation when it
+    will.
     """
 
     address_book_id: str | None = None

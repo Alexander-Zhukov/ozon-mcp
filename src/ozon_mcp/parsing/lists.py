@@ -52,28 +52,42 @@ def _walk(node: Any) -> list[dict[str, Any]]:
 
 
 # Ozon counts a collection in товары and a wishlist in подарки — that wording is
-# the only thing distinguishing the two on the shared lists page.
-_COUNT_RE = re.compile(r"^(\d+)\s+(товар\w*|подарк\w*|подарок)$")
+# the only thing on this page that distinguishes the two kinds.
+_COUNT_RE = re.compile(r"(\d+)\s+(товар\w*|подарк\w*|подарок)")
+_LIST_ID_RE = re.compile(r"[?&]list=(\d+)")
+
+
+def _cell_text(block: Any, key: str) -> str | None:
+    node = block.get(key) if isinstance(block, dict) else None
+    text = node.get("text") if isinstance(node, dict) else node
+    return str(text).strip() or None if isinstance(text, str) else None
 
 
 def parse_list_page(data: dict[str, Any], *, wishlists: bool) -> list[ListRef]:
     """Collections or wishlists from ``/my/favorites/lists``.
 
-    Each card renders as a name cell followed by its count cell, so entries are
-    read as that pair; ``wishlists`` picks which unit to keep.
+    Each card is one cell that states its own name and count — the name in
+    ``centerBlock.title``, the count in ``centerBlock.subtitle`` — and links to
+    the list, id and all. Reading the cell means the two never have to be paired
+    by their position in a flattened list of every string on the page.
     """
     out: list[ListRef] = []
     seen: set[str] = set()
     for state in widgets_all(data, "cellList"):
-        texts = [t.strip() for t in find_all(state, "text") if isinstance(t, str) and t.strip()]
-        for index, text in enumerate(texts):
-            match = _COUNT_RE.match(text)
-            if not match or index == 0:
+        for cell in state.get("cells") or [] if isinstance(state, dict) else []:
+            if not isinstance(cell, dict):
                 continue
-            name = texts[index - 1]
-            is_gift = match.group(2).startswith("подар")
-            if is_gift is not wishlists or name in seen:
+            body = cell.get(cell.get("type") or "") if isinstance(cell.get("type"), str) else None
+            body = body if isinstance(body, dict) else cell
+            center = body.get("centerBlock") if isinstance(body.get("centerBlock"), dict) else {}
+            name = _cell_text(center, "title")
+            count = _COUNT_RE.search(_cell_text(center, "subtitle") or "")
+            if not name or count is None or name in seen:
                 continue
+            if count.group(2).startswith("подар") is not wishlists:
+                continue
+            link = ((body.get("common") or {}).get("action") or {}).get("link") or ""
+            found = _LIST_ID_RE.search(str(link))
             seen.add(name)
-            out.append(ListRef(name=name, items=int(match.group(1))))
+            out.append(ListRef(name=name, items=int(count.group(1)), list_id=int(found.group(1)) if found else None))
     return out
