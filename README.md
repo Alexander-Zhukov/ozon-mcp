@@ -123,6 +123,22 @@ stays `null` rather than being forced into one. If a page ever offers no
 breakdown, the one published figure is matched against the shipments' own sums
 instead, and an ambiguous match stays `null` too.
 
+## Layout
+
+```
+src/ozon_mcp/
+  main.py              assembles the server: every tool module attached
+  mcp_server.py        the FastMCP instance and the instructions a client gets
+  tools/<domain>.py    the tools themselves, one module per domain
+  services/<domain>.py orchestration: what a tool means in Ozon's terms
+  parsing/<domain>.py  turning Ozon's widget JSON into DTOs
+  session/transport.py the one client: browser bootstrap, HTTP, retries, login
+  models/<domain>.py   the DTOs a caller sees, and their enums
+```
+
+Errors carry a code as well as a sentence — `[rate_limited]`, `[session_expired]`,
+`[writes_disabled]` — so a caller can branch on the code and relay the sentence.
+
 ## Session and state
 
 **If the session dies, the tools say so.** A signed-out session otherwise looks

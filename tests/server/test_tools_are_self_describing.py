@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from ozon_mcp.server import mcp
+from ozon_mcp.main import mcp
 
 if TYPE_CHECKING:
     from mcp.types import Tool

@@ -7,7 +7,7 @@ charge different money — so the scope is read, not assumed.
 from __future__ import annotations
 
 from ozon_mcp.models.checkout import Totals
-from ozon_mcp.parsing.checkout import _state_postpay, parse_pay_after_receipt
+from ozon_mcp.parsing.checkout import parse_pay_after_receipt, state_postpay
 
 # What the checkout layout declares for the two cases.
 TEXTS = {
@@ -69,7 +69,7 @@ def test_the_deferred_half_is_stated_not_left_to_the_reader() -> None:
     switch = parse_pay_after_receipt(
         _widget("SELECTED", TEXTS["mixedPrepayCheckboxText"], "Есть предоплата 2 152 ₽"), TEXTS
     )
-    _state_postpay(switch, Totals(total="2 152 ₽ сегодня", order_total="6 691 ₽"))
+    state_postpay(switch, Totals(total="2 152 ₽ сегодня", order_total="6 691 ₽"))
     assert switch.post_payment_amount == "4 539 ₽"
     assert "2 152 ₽ is charged now" in (switch.note or "")
 
@@ -78,7 +78,7 @@ def test_a_switch_left_off_says_the_whole_order_is_charged_now() -> None:
     # Ozon stops printing the prepayment line once the switch is off, and
     # nothing is deferred then — so the useful figure is the whole order.
     switch = parse_pay_after_receipt(_widget("UNSELECTED", TEXTS["mixedPrepayCheckboxText"]), TEXTS)
-    _state_postpay(switch, Totals(total="6 691 ₽", order_total="6 691 ₽"))
+    state_postpay(switch, Totals(total="6 691 ₽", order_total="6 691 ₽"))
     assert switch.post_payment_amount is None
     assert switch.note == (
         "only part of this order can be paid on delivery; the switch is off, so all 6 691 ₽ is charged now"
@@ -87,13 +87,13 @@ def test_a_switch_left_off_says_the_whole_order_is_charged_now() -> None:
 
 def test_a_full_order_says_nothing_is_charged_now() -> None:
     switch = parse_pay_after_receipt(_widget("SELECTED", TEXTS["fullPostPayCheckboxText"]), TEXTS)
-    _state_postpay(switch, Totals(total="0 ₽ сегодня", order_total="777 ₽"))
+    state_postpay(switch, Totals(total="0 ₽ сегодня", order_total="777 ₽"))
     assert switch.post_payment_amount == "777 ₽"
     assert "nothing is charged now" in (switch.note or "")
 
 
 def test_no_switch_at_all_is_said_out_loud() -> None:
     switch = parse_pay_after_receipt({}, TEXTS)
-    _state_postpay(switch, Totals(order_total="2 152 ₽"))
+    state_postpay(switch, Totals(order_total="2 152 ₽"))
     assert switch.scope == "none"
     assert switch.note == "Ozon does not offer pay-on-delivery for this order"

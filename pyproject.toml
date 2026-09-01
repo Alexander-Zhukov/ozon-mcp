@@ -68,10 +68,9 @@ ignore = [
 # ARG002: the session stand-in mirrors the real signatures, unused arguments included.
 # PLR6301: test doubles override methods that do not need self.
 "tests/**" = ["S101", "INP001", "SLF001", "PLC2701", "PLR6301", "ARG001", "ARG002", "PT022"]
-# TC*: FastMCP evaluates tool annotations at runtime, so model imports must stay
-# out of a TYPE_CHECKING block. FBT*: MCP tools receive flat JSON arguments, so a
-# boolean parameter cannot be made keyword-only.
-"src/ozon_mcp/server.py" = ["TC001", "TC002", "TC003", "FBT001", "FBT002"]
+# FBT*: MCP tools receive flat JSON arguments, so a boolean parameter cannot be
+# made keyword-only.
+"src/ozon_mcp/tools/*.py" = ["FBT001", "FBT002"]
 # Same reason: the checkout service mirrors the tool signature.
 "src/ozon_mcp/services/checkout.py" = ["FBT001"]
 # Same reason: cancel_order mirrors the tool signature.

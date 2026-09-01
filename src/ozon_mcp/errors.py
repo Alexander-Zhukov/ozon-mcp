@@ -1,8 +1,52 @@
-"""Domain errors surfaced to MCP callers."""
+"""Domain errors surfaced to MCP callers.
+
+Each carries a ``code`` beside its message. The message is written to be relayed
+to a person; the code is what a caller can branch on without matching text —
+"session_expired" and "writes_disabled" call for different behaviour, and
+telling them apart by substring is how a reworded sentence changes an agent's
+mind about what to do.
+"""
+
+from enum import StrEnum
+
+
+class ErrorCode(StrEnum):
+    """What went wrong, in a form worth branching on."""
+
+    OZON = "ozon_error"
+    """Something Ozon refused that has no more specific code."""
+
+    UPSTREAM = "upstream_unavailable"
+    """Ozon did not answer with a readable page. Retrying may help."""
+
+    RATE_LIMITED = "rate_limited"
+    """Ozon is throttling this session. Waiting helps; retrying at once does not."""
+
+    SESSION_EXPIRED = "session_expired"
+    """The stored session is signed out; recovery needs a one-time code."""
+
+    WRITES_DISABLED = "writes_disabled"
+    """The operator has not allowed account changes. No tool can change that."""
+
+    ORDERS_DISABLED = "orders_disabled"
+    """The operator has not allowed placing orders. No tool can change that."""
+
+    TOTAL_MISMATCH = "total_mismatch"
+    """The confirmed total is no longer what Ozon charges. Nothing was ordered."""
 
 
 class OzonError(RuntimeError):
-    """Base class for errors this server raises to the caller."""
+    """Base class for errors this server raises to the caller.
+
+    MCP hands a caller the message and nothing else, so the code is prefixed to
+    it: a caller that wants to branch reads the prefix, and one that relays the
+    text loses nothing worth keeping.
+    """
+
+    code: ErrorCode = ErrorCode.OZON
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"[{self.code}] {message}")
 
 
 class UpstreamError(OzonError):
@@ -12,6 +56,8 @@ class UpstreamError(OzonError):
     indistinguishable downstream: every parser turns a page with no widgets into
     an empty list, so a 502 or a timeout used to surface as "you have no orders".
     """
+
+    code = ErrorCode.UPSTREAM
 
     def __init__(self, status: int, detail: str = "") -> None:
         self.status = status
@@ -32,6 +78,8 @@ class RateLimitedError(UpstreamError):
     waiting helps, and the wait is the one Ozon asked for.
     """
 
+    code = ErrorCode.RATE_LIMITED
+
     def __init__(self, retry_after: float | None = None) -> None:
         self.retry_after = retry_after
         waited = f" It asked to wait {retry_after:.0f}s." if retry_after else ""
@@ -46,6 +94,8 @@ class RateLimitedError(UpstreamError):
 class WritesDisabledError(OzonError):
     """Raised when a mutating tool is called while writes are disabled."""
 
+    code = ErrorCode.WRITES_DISABLED
+
     def __init__(self) -> None:
         super().__init__(
             "Account-mutating tools are disabled: the cart, favorites and lists cannot be changed. "
@@ -58,6 +108,8 @@ class OrdersDisabledError(OzonError):
     """Placing an order is gated separately from other writes: it spends money
     and cannot be undone through this server.
     """
+
+    code = ErrorCode.ORDERS_DISABLED
 
     def __init__(self) -> None:
         super().__init__(
@@ -75,6 +127,8 @@ class TotalMismatchError(OzonError):
     than the one the user agreed to.
     """
 
+    code = ErrorCode.TOTAL_MISMATCH
+
     def __init__(self, expected: str, actual: str | None) -> None:
         super().__init__(
             f"the order now costs {actual!r}, not the confirmed {expected!r} — Ozon recalculated it. "
@@ -91,6 +145,8 @@ class SessionExpiredError(OzonError):
     nothing says why. The message is written for whoever is driving the agent,
     because recovery needs a one-time code that only the account owner receives.
     """
+
+    code = ErrorCode.SESSION_EXPIRED
 
     def __init__(self, detail: str = "") -> None:
         super().__init__(
