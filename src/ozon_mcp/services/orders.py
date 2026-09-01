@@ -12,11 +12,12 @@ from ozon_mcp.errors import OzonError, WritesDisabledError
 from ozon_mcp.models.checkout import CancelReason, OrderCancelled, PaymentRequested
 from ozon_mcp.parsing.common import find_all, walk, widget
 from ozon_mcp.parsing.orders import order_numbers_from_link, parse_orders
+from ozon_mcp.parsing.returns import parse_returns
 from ozon_mcp.settings import get_settings
 from ozon_mcp.utils.money import format_money, to_kopecks
 
 if TYPE_CHECKING:
-    from ozon_mcp.models.orders import Order
+    from ozon_mcp.models.orders import Order, Return
 
 
 def _require_writes() -> None:
@@ -89,6 +90,11 @@ def orders_by_date(date_from: str, date_to: str, max_orders: int = 300) -> list[
 # parameters. Rather than rebuilding those parameters (they include ids only the
 # server knows, like OrderId), every step follows the action the previous
 # response carried — which is what the site itself does.
+# The returns list is a container the page fetches after itself.
+_RETURNS_PATH: Final = "/my/returns?layout_container=returns-list-desktop&layout_page_index={index}"
+# The list starts at the second index: the first is the page itself.
+_FIRST_RETURN_PAGE: Final = 2
+_MAX_RETURN_PAGES: Final = 40
 _ORDER_NUMBER_RE: Final = re.compile(r"\d{6,}-\d{3,}")
 _CANCEL_MODAL_ACTION: Final = "selectCancelModalRms"
 _CANCEL_ORDER_ACTION: Final = "v2/cancelOrderRms"
@@ -237,6 +243,32 @@ def _order_exists(page: dict[str, Any]) -> bool:
     only a real order has.
     """
     return any(widget(page, name) for name in ("shipmentWidget", "orderDoneTotal", "orderDetailsHeader"))
+
+
+def list_returns(limit: int = 100) -> list[Return]:
+    """The buyer's returns, newest first.
+
+    The returns page carries none of them: they arrive in a container it fetches
+    after itself, a few at a time, and what the page itself holds is the returns
+    FAQ. Reading the page instead reported its FAQ questions as returns, and on
+    an account that had returns it reported nothing.
+    """
+    session = get_session()
+    out: list[Return] = []
+    seen: set[str] = set()
+    # The container advertises no paginator of its own: the page simply asks for
+    # the next index, three returns at a time, until one comes back empty. Going
+    # by the cursor instead stopped at the first three of eighteen.
+    for index in range(_FIRST_RETURN_PAGE, _FIRST_RETURN_PAGE + _MAX_RETURN_PAGES):
+        data = session.fetch(_RETURNS_PATH.format(index=index), backend="entrypoint")
+        fresh = [entry for entry in parse_returns(data) if entry.number not in seen]
+        if not fresh:
+            break
+        seen.update(entry.number for entry in fresh if entry.number)
+        out += fresh
+        if len(out) >= limit:
+            break
+    return out[:limit]
 
 
 def resolve_order(order: str) -> str:

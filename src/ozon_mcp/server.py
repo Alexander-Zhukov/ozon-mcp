@@ -145,12 +145,13 @@ async def purchases(
 
 
 @mcp.tool()
-async def list_returns() -> list[Return]:
-    """Returns this account has opened, with their status. Empty list means
-    none are open — the page also carries Ozon's returns FAQ, which is not
-    reported as data.
+async def list_returns(limit: Limit = 100) -> list[Return]:
+    """Returns this account has opened, newest first: the return number, the
+    date of the application, Ozon's own status badge ("Деньги отправлены", "Ждём
+    товар") and the sentence under it, the amount, and the products going back.
+    Paginated through — `limit` caps how many come back.
     """
-    return await run_blocking(favorites.list_returns)
+    return await run_blocking(lambda: orders.list_returns(limit))
 
 
 # ── catalog / product ────────────────────────────────────────────────────────

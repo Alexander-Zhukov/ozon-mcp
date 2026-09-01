@@ -47,9 +47,26 @@ class OrderProduct(OzonModel):
     url: str | None = None
 
 
-class Return(OzonModel):
-    """One buyer return, as the returns page lists it."""
+class ReturnProduct(OzonModel):
+    """A product being returned."""
 
+    sku: str | None = None
     title: str | None = None
+
+
+class Return(OzonModel):
+    """One buyer return.
+
+    ``status`` is Ozon's own badge — "Деньги отправлены", "Ждём товар" — and
+    ``detail`` the sentence under it, which is where a refund says where the
+    money went. ``number`` is what the return is addressed by.
+    """
+
+    number: str | None = None
+    title: str | None = None
+    date: str | None = None
     status: str | None = None
+    detail: str | None = None
+    amount: str | None = None
+    products: list[ReturnProduct] = []
     link: str | None = None
