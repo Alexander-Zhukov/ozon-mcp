@@ -86,10 +86,13 @@ login — makes the others wait.
 
 | Tool | |
 |---|---|
-| `list_selections` | Selections with size, status and ids |
+| `list_selections` | Selections with size, status, ids and the share link |
 | `get_selection` | One selection in full, including description and visibility |
+| `selection_products` | What it holds: sku, title, price, card link |
 | `create_selection` | Create one around a product; private by default |
-| `set_selection_items` | Set which products it holds |
+| `add_to_selection` | Add products, keeping the ones already in it |
+| `remove_from_selection` | Take products out, keeping the rest |
+| `set_selection_items` | Replace the whole list of products |
 | `edit_selection` | Rename it, replace its description |
 | `set_selection_public` | Publish to the public profile, or unpublish |
 | `delete_selection` | Delete it; the products stay |
@@ -148,9 +151,11 @@ side, as Ozon splits them.
 
 **Wishlists and «Подборки» are different things.** A wishlist has a numeric id
 and holds anything. A selection has a uuid, a cover, a description and a
-visibility; its products come from favorites only, one call sets its whole
-product list, and publishing puts it on the account owner's public profile after
-review.
+visibility; its products come from favorites only, and publishing puts it on the
+account owner's public profile after review. Its products are a separate read —
+the list states a count — and Ozon has no "add" of its own: the form submits the
+whole list, which is what `add_to_selection` / `remove_from_selection` do around
+the current contents.
 
 **Cancelling works line by line.** `cancel_order(order, skus=[...])` drops those
 items and leaves the rest of the order standing, in as many passes as it has

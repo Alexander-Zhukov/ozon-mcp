@@ -6,6 +6,7 @@ from pydantic import Field
 
 from ozon_mcp.dependencies import run_blocking
 from ozon_mcp.mcp_server import mcp
+from ozon_mcp.models.catalog import Tile
 from ozon_mcp.models.common import WriteResult
 from ozon_mcp.models.lists import Selection
 from ozon_mcp.services import selections
@@ -38,6 +39,41 @@ async def get_selection(
 
 
 @mcp.tool()
+async def selection_products(
+    uuid: Annotated[str, Field(description="The selection, from list_selections()[].uuid.")],
+) -> list[Tile]:
+    """The products a «Подборка» holds: sku, title, price and a card link.
+    Neither list_selections() nor get_selection() carries them — they state a
+    count only — so this is the read to make before changing what is in there.
+    """
+    return await run_blocking(lambda: selections.selection_products(uuid))
+
+
+@mcp.tool()
+async def add_to_selection(
+    uuid: Annotated[str, Field(description="The selection, from list_selections()[].uuid.")],
+    skus: Annotated[list[str], Field(description="Products to add; the existing ones stay.")],
+) -> Selection:
+    """[GATED by writes_enabled] Add products to a «Подборка», keeping what is
+    already in it. Products must be in favorites first — Ozon draws only from
+    there and drops the rest silently, so check the `items` count that comes back.
+    """
+    return await run_blocking(lambda: selections.add_to_selection(uuid, skus))
+
+
+@mcp.tool()
+async def remove_from_selection(
+    uuid: Annotated[str, Field(description="The selection, from list_selections()[].uuid.")],
+    skus: Annotated[list[str], Field(description="Products to take out; the rest stay.")],
+) -> Selection:
+    """[GATED by writes_enabled] Take products out of a «Подборка», keeping the
+    rest. Fails if the selection holds none of them, rather than reporting a
+    removal that did not happen.
+    """
+    return await run_blocking(lambda: selections.remove_from_selection(uuid, skus))
+
+
+@mcp.tool()
 async def create_selection(
     name: Annotated[
         str, Field(min_length=1, max_length=60, description="Name of the selection, as a person reads it.")
@@ -53,7 +89,7 @@ async def create_selection(
     ] = False,
 ) -> Selection:
     """[GATED by writes_enabled] Create a «Подборка» around one product and
-    return it with its uuid. More products go in with set_selection_items().
+    return it with its uuid. More products go in with add_to_selection().
     `public` defaults to false on purpose: publishing puts it on the account
     owner's public profile, so ask them before passing true.
     """
@@ -68,9 +104,10 @@ async def set_selection_items(
         Field(description="The products the selection should hold, in full — not an addition."),
     ],
 ) -> Selection:
-    """[GATED by writes_enabled] Set which products a selection holds.
-    This replaces the list: to add, pass the current products plus the new one;
-    to remove, pass the ones that should stay. An empty list empties it.
+    """[GATED by writes_enabled] Set which products a selection holds, as the
+    whole list. For "add this" / "take that out" use add_to_selection() and
+    remove_from_selection(), which read the current products first; this one
+    replaces them, and an empty list empties the selection.
     Products must be in favorites first — Ozon draws only from there, and a
     product that is not is dropped silently, so check the `items` count that
     comes back.

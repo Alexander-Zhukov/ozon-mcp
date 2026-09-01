@@ -38,10 +38,11 @@ Buying, in order — each step is a precondition for the next:
 Undo: cancel_order(order_number), optionally skus=[...] for single lines.
 
 Two kinds of lists, and they are not interchangeable: wishlists (вишлисты) via
-get_lists / create_list / set_list_membership, and «Подборки» via
-list_selections / create_selection / set_selection_items — curated, publishable,
-addressed by uuid, and filled only from favorites. Publishing a selection is
-outward-facing: it appears on the account owner's public profile, so ask first.
+get_lists / create_list / set_list_membership, and «Подборки» via list_selections /
+selection_products / create_selection / add_to_selection / remove_from_selection —
+curated, publishable, addressed by uuid, and filled only from favorites. A selection's products
+are a separate read: the list states a count only. Publishing a selection is outward-facing — it
+appears on the account owner's public profile, so ask first.
 
 Two figures, never interchangeable: totals.total is what Ozon charges today, totals.order_total
 is what the order costs. On a pay-on-delivery order today's charge is 0 ₽ — quote order_total to

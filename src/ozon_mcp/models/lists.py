@@ -61,8 +61,11 @@ class Selection(OzonModel):
     owner_id: str | None = None
     name: str | None = None
     description: str | None = None
-    items: int | None = None
+    items: int | None = Field(default=None, description="How many products it holds; selection_products() lists them.")
     status: str | None = None
     public: bool | None = None
     cover: str | None = None
-    link: str | None = None
+    link: str | None = Field(
+        default=None,
+        description="The link Ozon's own «Скопировать ссылку» gives; it carries the owner id and needs it to work.",
+    )

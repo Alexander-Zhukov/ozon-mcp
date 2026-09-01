@@ -4,6 +4,28 @@ Notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/).
 
+## [1.1.0] - 2026-09-01
+
+### Added
+
+- **A selection's products can be read**: `selection_products` lists what a
+  «Подборка» holds. Neither the list nor the edit form carries them — the list
+  states a count, the form only the text fields — so they come from the
+  selection page's own container, named explicitly because the page's paginator
+  points at recommendations instead.
+- `add_to_selection` / `remove_from_selection`. Ozon has no "add": the form
+  always submits the whole list, so sending only the additions replaced the
+  selection with them. These read the current products first.
+  `set_selection_items` stays as the way to set the whole list at once.
+- `create_selection` now returns the selection's link.
+
+### Fixed
+
+- `delete_selection` reported a refusal as a success. Ozon answers one with
+  HTTP 200, empty error fields and the reason in a notification bar, so the
+  outcome is now decided by re-reading the list — and the selection has to exist
+  first, because a uuid that was never there is absent from the list too.
+
 ## [1.0.0] - 2026-09-01
 
 First stable release. 39 tools over one ozon.ru buyer account.
