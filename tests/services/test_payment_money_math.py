@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from ozon_mcp.services.orders import _kopecks, _money
+from ozon_mcp.services.orders import _money
+from ozon_mcp.utils.money import to_kopecks
 
 
 @pytest.mark.parametrize(
@@ -19,7 +20,7 @@ from ozon_mcp.services.orders import _kopecks, _money
     ],
 )
 def test_kopecks_reads_ozon_money(text: str, expected: int | None) -> None:
-    assert _kopecks(text) == expected
+    assert to_kopecks(text) == expected
 
 
 @pytest.mark.parametrize(
@@ -32,4 +33,4 @@ def test_money_writes_roubles(kopecks: str, expected: str | None) -> None:
 
 def test_the_shortfall_is_the_difference() -> None:
     # 656 ₽ owed against 415,64 ₽ on the card is the 240,36 ₽ Ozon itself quotes.
-    assert _money(str(_kopecks("656 ₽") - _kopecks("415,64 ₽"))) == "240,36 ₽"
+    assert _money(str(to_kopecks("656 ₽") - to_kopecks("415,64 ₽"))) == "240,36 ₽"

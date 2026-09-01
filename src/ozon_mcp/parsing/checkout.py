@@ -9,21 +9,24 @@ per-shipment dates; ``total`` the money rows plus the create-order action;
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
 from ozon_mcp.models.checkout import (
     Checkout,
     Delivery,
-    DeliveryPart,
     PayAfterReceipt,
     PaymentOption,
     PickupPoint,
     PointsOption,
+    Shipment,
+    ShipmentItem,
     TotalRow,
     Totals,
 )
-from ozon_mcp.parsing.common import find_all, walk, widget, widgets_all
+from ozon_mcp.parsing.common import PRICE_RE, find_all, layout_widgets, walk, widget, widgets_all
+from ozon_mcp.utils.money import format_money, to_kopecks
 
 _PAYMENT_TYPE_RE = re.compile(r"payment_type=(\d+)")
 _POINTS_RE = re.compile(r"points_applied=([\d.]+)")
@@ -31,7 +34,6 @@ _DIGITS_RE = re.compile(r"\d+")
 _TAG_RE = re.compile(r"<[^>]+>")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 _RECIPIENT_RE = re.compile(r"^[А-ЯЁ][а-яё]+ [А-ЯЁ][а-яё]+\s+\d{6,}$")
-_DELIVERY_RE = re.compile(r"Достав(?:ка|им)\s+\d")
 _SPLIT_KEY_RE = re.compile(r"split_key=([A-Za-z0-9\-]+)")
 
 
@@ -109,13 +111,50 @@ def _payment_note(state: Any, needle: str) -> str | None:
     return None
 
 
-def parse_pay_after_receipt(state: Any) -> PayAfterReceipt:
-    """The pay-on-delivery switch: its checkbox state and the link that flips it.
+def postpay_texts(data: dict[str, Any]) -> dict[str, str]:
+    """The wording Ozon itself declares for the pay-on-delivery checkbox.
+
+    The layout declares one label for a fully deferred order
+    (``fullPostPayCheckboxText``) and another for one where only part of it can
+    wait (``mixedPrepayCheckboxText``), plus the prefix of the prepayment line.
+    Comparing the rendered label against these is what tells the two apart —
+    guessing at a substring of a marketing string would break the day Ozon
+    rewords it, and the two cases charge different money.
+    """
+    for entry in layout_widgets(data):
+        if entry.get("component") != "paymentInfoV2":
+            continue
+        try:
+            params = json.loads(entry.get("params") or "{}")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(params, dict):
+            continue
+        return {key: value for key, value in params.items() if isinstance(value, str)}
+    return {}
+
+
+def _scope(label: str | None, texts: dict[str, str]) -> str:
+    """Whether the offered pay-on-delivery covers the whole order or part of it."""
+    rendered = (label or "").strip().casefold()
+    if not rendered:
+        return "none"
+    if rendered == (texts.get("mixedPrepayCheckboxText") or "").strip().casefold():
+        return "partial"
+    if rendered == (texts.get("fullPostPayCheckboxText") or "").strip().casefold():
+        return "full"
+    # Unrecognised wording: the prepayment line is the other signal Ozon gives.
+    return "partial" if "часть" in rendered else "full"
+
+
+def parse_pay_after_receipt(state: Any, texts: dict[str, str] | None = None) -> PayAfterReceipt:
+    """The pay-on-delivery switch: its state, its reach, and the link that flips it.
 
     The link is not a stable toggle — Ozon renames the parameter with the state
     (``post_payment_disabled=0`` while on, ``post_payment_enabled=0`` while off)
     — so it has to be read from the current payload rather than assumed.
     """
+    texts = texts or {}
     for node in walk(state):
         title = (
             _text((node.get("centerBlock") or {}).get("title")) if isinstance(node.get("centerBlock"), dict) else None
@@ -125,12 +164,16 @@ def parse_pay_after_receipt(state: Any) -> PayAfterReceipt:
         left = node.get("leftBlock") if isinstance(node.get("leftBlock"), dict) else {}
         control = left.get("control") if isinstance(left, dict) else None
         status = ((control or {}).get("checkbox") or {}).get("status") if isinstance(control, dict) else None
-        texts: list[str] = [t for t in find_all(state, "text") if isinstance(t, str)]
+        rendered = [t for t in find_all(state, "text") if isinstance(t, str)]
+        prepayment = next((_plain(t) for t in rendered if "предоплата" in t.lower()), None)
+        found = PRICE_RE.search(prepayment or "")
         return PayAfterReceipt(
             available=True,
             enabled=status == "SELECTED",
+            scope=_scope(_plain(title), texts),
             label=_plain(title),
-            prepayment=next((_plain(t) for t in texts if "предоплата" in t.lower()), None),
+            prepayment=prepayment,
+            prepayment_amount=found.group(0) if found else None,
             toggle_link=_link(left if isinstance(left, dict) else {}) or None,
         )
     return PayAfterReceipt()
@@ -231,20 +274,80 @@ def parse_deliveries(data: dict[str, Any]) -> list[Delivery]:
     return deliveries
 
 
-def parse_parts(data: dict[str, Any]) -> list[DeliveryPart]:
-    """Per-shipment dates. They sit in one of several rfbsSplit instances, so
-    scan them all rather than trusting widget order.
+def parse_shipments(data: dict[str, Any]) -> list[Shipment]:
+    """The order's shipments, each with the id Ozon addresses it by.
+
+    Read from each ``rfbsSplit`` widget's own fields rather than by scanning the
+    page's text: the id is what every per-shipment call needs, and text order is
+    not a reliable way to pair a date with a shipment.
     """
-    parts: list[DeliveryPart] = []
-    texts: list[str] = []
+    shipments: list[Shipment] = []
     for state in widgets_all(data, "rfbsSplit"):
-        texts += [t.strip() for t in find_all(state, "text") if isinstance(t, str) and t.strip()]
-    for index, text in enumerate(texts):
-        if not _DELIVERY_RE.search(text):
+        if not isinstance(state, dict) or not state.get("id"):
             continue
-        details = next((t for t in texts[index + 1 : index + 4] if "товар" in t), None)
-        parts.append(DeliveryPart(title=_plain(text), details=_plain(details)))
-    return parts
+        header = state.get("header") if isinstance(state.get("header"), dict) else {}
+        shipments.append(
+            Shipment(
+                split_key=str(state["id"]),
+                delivery=_plain(_text(header.get("text"))),
+                summary=_plain(_text(state.get("subHeader"))),
+            )
+        )
+    return sorted(shipments, key=lambda shipment: shipment.split_key or "")
+
+
+def shipment_detail_link(data: dict[str, Any], split_key: str) -> str | None:
+    """The link to a shipment's contents, as that shipment declares it.
+
+    It carries the currently chosen address, so it is taken from the payload
+    instead of being assembled from the split key alone.
+    """
+    for state in widgets_all(data, "rfbsSplit"):
+        if isinstance(state, dict) and str(state.get("id")) == split_key:
+            action = state.get("action") if isinstance(state.get("action"), dict) else {}
+            link = action.get("link")
+            return str(link) if link else None
+    return None
+
+
+def parse_shipment_items(data: dict[str, Any]) -> list[ShipmentItem]:
+    """Contents of one shipment, from its detail modal.
+
+    ``vertical.splits`` groups the lines by seller; each line states its title
+    and variant as two text atoms of ``mainColumn``, its price separately, and
+    its quantity in ``sideColumn``.
+    """
+    items: list[ShipmentItem] = []
+    for state in widgets_all(data, "splitDetailWebV2"):
+        vertical = state.get("vertical") if isinstance(state, dict) else None
+        for group in (vertical or {}).get("splits") or []:
+            if not isinstance(group, dict):
+                continue
+            seller = _plain(_text(group.get("title")))
+            for entry in group.get("items") or []:
+                if not isinstance(entry, dict):
+                    continue
+                labels = [_plain(_text(atom.get("textAtom"))) for atom in entry.get("mainColumn") or []]
+                labels = [label for label in labels if label]
+                price = entry.get("price") if isinstance(entry.get("price"), dict) else {}
+                quantity = next((_plain(_text(cell)) for cell in entry.get("sideColumn") or []), None)
+                items.append(
+                    ShipmentItem(
+                        title=labels[0] if labels else None,
+                        variant=labels[1] if len(labels) > 1 else None,
+                        price=_plain(_text(price.get("price")) or price.get("price")),
+                        quantity=quantity,
+                        seller=seller,
+                    )
+                )
+    return items
+
+
+def shipment_total(items: list[ShipmentItem]) -> str | None:
+    """What a shipment costs, summed from its lines."""
+    amounts = [to_kopecks(item.price) for item in items]
+    known = [amount for amount in amounts if amount is not None]
+    return format_money(sum(known)) if known and len(known) == len(amounts) else None
 
 
 def parse_points(state: Any) -> list[PointsOption]:
@@ -311,6 +414,40 @@ def parse_totals(state: Any) -> Totals:
     )
 
 
+def _state_postpay(switch: PayAfterReceipt, totals: Totals) -> None:
+    """Spell out what the switch means in money, in one sentence.
+
+    Ozon renders the deferred half nowhere: it prints today's charge and the
+    order total and leaves the difference to the reader. A caller that quotes
+    only what it was given therefore states the wrong number, so the split is
+    computed here rather than left to each consumer.
+    """
+    if not switch.available:
+        switch.note = "Ozon does not offer pay-on-delivery for this order"
+        return
+    part = "only part of this order can be paid on delivery" if switch.scope == "partial" else "the whole order"
+    if not switch.enabled:
+        # Ozon prints the prepayment line only while the switch is on: with it
+        # off nothing is deferred, so today's charge is the whole order.
+        switch.note = f"{part}; the switch is off, so all {totals.order_total} is charged now"
+        return
+    if switch.scope != "partial":
+        switch.post_payment_amount = totals.order_total
+        switch.note = f"the whole order ({totals.order_total}) is paid on receipt, nothing is charged now"
+        return
+    order_total = to_kopecks(totals.order_total)
+    prepayment = to_kopecks(switch.prepayment_amount)
+    if order_total is None or prepayment is None:
+        switch.note = "only part of this order can be paid on delivery; Ozon did not state the prepayment"
+        return
+    deferred = format_money(order_total - prepayment)
+    switch.post_payment_amount = deferred
+    switch.note = (
+        f"only part of this order can be paid on delivery: {switch.prepayment_amount} is charged now, "
+        f"{deferred} on receipt"
+    )
+
+
 def parse_checkout(data: dict[str, Any]) -> Checkout:
     """Build the checkout state; ``available`` is False when Ozon shows no order."""
     payment = widget(data, "paymentInfoV2")
@@ -320,6 +457,8 @@ def parse_checkout(data: dict[str, Any]) -> Checkout:
     payment_options = parse_payment_options(payment)
     deliveries = parse_deliveries(data)
     totals = parse_totals(total)
+    pay_after_receipt = parse_pay_after_receipt(payment, postpay_texts(data))
+    _state_postpay(pay_after_receipt, totals)
     # The page still renders its shell when nothing in the cart is ticked. Saying
     # "available" then would hand the caller an empty order; name the fix instead.
     if not payment_options and not deliveries and not totals.total:
@@ -334,10 +473,10 @@ def parse_checkout(data: dict[str, Any]) -> Checkout:
     return Checkout(
         available=True,
         payment_options=payment_options,
-        pay_after_receipt=parse_pay_after_receipt(payment),
+        pay_after_receipt=pay_after_receipt,
         installment=_payment_note(payment, "Рассрочка"),
         deliveries=deliveries,
-        parts=parse_parts(data),
+        shipments=parse_shipments(data),
         points=parse_points(widget(data, "premiumPointsToggle")),
         totals=totals,
         place_order_action=create_action,

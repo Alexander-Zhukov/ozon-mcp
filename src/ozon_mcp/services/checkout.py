@@ -16,13 +16,22 @@ from __future__ import annotations
 
 import re
 import time
+from itertools import combinations
 from typing import TYPE_CHECKING, Any, Final
 
 from ozon_mcp.dependencies import get_session
 from ozon_mcp.errors import OrdersDisabledError, OzonError, TotalMismatchError
-from ozon_mcp.parsing.checkout import parse_checkout, parse_pickup_points, pickup_apply_link
+from ozon_mcp.parsing.checkout import (
+    parse_checkout,
+    parse_pickup_points,
+    parse_shipment_items,
+    pickup_apply_link,
+    shipment_detail_link,
+    shipment_total,
+)
 from ozon_mcp.parsing.common import widget
 from ozon_mcp.settings import get_settings
+from ozon_mcp.utils.money import to_kopecks
 
 if TYPE_CHECKING:
     from ozon_mcp.models.checkout import Delivery, PaymentOption, PickupPoint
@@ -39,6 +48,9 @@ _INIT_CHECKOUT_ACTION: Final = "initCheckoutState"
 # re-calls the same action until the response carries the result instead of
 # another polling instruction.
 _ORDER_POLL_ATTEMPTS: Final = 40
+# Attributing the prepayment is a subset sum over shipments; an order with more
+# than a dozen of them is not worth enumerating.
+_SUBSET_LIMIT: Final = 12
 
 # Ozon names the methods in English internals only, but a person says "СБП",
 # "Ozon Банк" or "ЮMoney" — so map those words onto the `kind` the payload
@@ -70,12 +82,65 @@ def _address_book(link: str | None) -> Any:
     return widget(get_session().fetch(link, backend="entrypoint"), "commonAddressBook")
 
 
-def _read(path: str = _CHECKOUT_PATH, *, with_points: bool = True) -> Checkout:
-    checkout = parse_checkout(get_session().fetch(path, backend="entrypoint"))
+def _fill_shipments(checkout: Checkout, data: dict[str, Any]) -> None:
+    """Load each shipment's contents from its own detail view."""
+    for shipment in checkout.shipments:
+        link = shipment_detail_link(data, shipment.split_key or "")
+        if link is None:
+            continue
+        shipment.items = parse_shipment_items(get_session().fetch(link, backend="entrypoint"))
+        shipment.total = shipment_total(shipment.items)
+
+
+def _attribute_prepayment(checkout: Checkout) -> None:
+    """Work out which shipments the prepayment is for.
+
+    Ozon states one prepayment figure for the order and never says which part of
+    it is not eligible for pay-on-delivery. Eligibility is decided per shipment,
+    though, so the figure has to be some combination of shipment totals: when
+    exactly one combination adds up to it, those shipments are the prepaid ones
+    and the rest are deferred. When several combinations fit, the answer is left
+    unset — naming the wrong items is worse than admitting Ozon did not say.
+    """
+    prepayment = to_kopecks(checkout.pay_after_receipt.prepayment_amount)
+    shipments = checkout.shipments
+    amounts = [to_kopecks(shipment.total) for shipment in shipments]
+    if prepayment is None or not shipments or None in amounts or len(shipments) > _SUBSET_LIMIT:
+        return
+    indexes = range(len(shipments))
+    matches = [
+        combination
+        for size in indexes
+        for combination in combinations(indexes, size + 1)
+        if sum(amounts[index] or 0 for index in combination) == prepayment
+    ]
+    if len(matches) != 1:
+        return
+    prepaid = set(matches[0])
+    for index, shipment in enumerate(shipments):
+        shipment.prepaid = index in prepaid
+
+
+def _read(
+    path: str = _CHECKOUT_PATH,
+    *,
+    with_points: bool = True,
+    with_shipments: bool | None = None,
+) -> Checkout:
+    """Read the checkout. ``with_shipments`` defaults to loading the shipments'
+    contents only when the order is split across prepaid and deferred parts —
+    that is the case where knowing which items are which decides what to do.
+    """
+    data = get_session().fetch(path, backend="entrypoint")
+    checkout = parse_checkout(data)
     if checkout.available and with_points:
         for delivery in checkout.deliveries:
             state = _address_book(delivery.change_link)
             delivery.pickup_points = parse_pickup_points(state) if state is not None else []
+    partial = checkout.pay_after_receipt.scope == "partial"
+    if checkout.available and (partial if with_shipments is None else with_shipments):
+        _fill_shipments(checkout, data)
+        _attribute_prepayment(checkout)
     return checkout
 
 
@@ -94,7 +159,7 @@ def _apply(link: str) -> Checkout:
     """
     joiner = "&" if "?" in link else "?"
     get_session().post_page(f"{link}{joiner}page_changed=true", {}, backend="entrypoint")
-    return _read(with_points=False)
+    return _read(with_points=False, with_shipments=False)
 
 
 def _match_pickup(points: list[PickupPoint], wanted: str) -> PickupPoint:
@@ -197,9 +262,9 @@ def start_checkout() -> Checkout:
     return _read()
 
 
-def get_checkout() -> Checkout:
+def get_checkout(shipment_items: bool | None = None) -> Checkout:
     """The order being formed, initialising it if Ozon has not done so yet."""
-    checkout = _read()
+    checkout = _read(with_shipments=shipment_items)
     if not checkout.available and "selected" not in (checkout.reason or ""):
         return start_checkout()
     return checkout

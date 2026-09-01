@@ -21,11 +21,33 @@ class PaymentOption(OzonModel):
     apply_link: str | None = None
 
 
-class DeliveryPart(OzonModel):
-    """One shipment of a split order."""
+class ShipmentItem(OzonModel):
+    """One line of a shipment, as the shipment's own detail view states it."""
 
     title: str | None = None
-    details: str | None = None
+    variant: str | None = None
+    price: str | None = None
+    quantity: str | None = None
+    seller: str | None = None
+
+
+class Shipment(OzonModel):
+    """One shipment of a split order, and whether it has to be paid up front.
+
+    Ozon splits an order into shipments and decides pay-on-delivery per
+    shipment, but it never says which shipment the prepayment belongs to — only
+    the total. ``prepaid`` is therefore derived by matching that total against
+    the shipments' own sums: True/False once one combination accounts for it,
+    and None when the amounts leave it ambiguous. None means "Ozon did not say
+    and the arithmetic does not settle it", never "no prepayment".
+    """
+
+    split_key: str | None = None
+    delivery: str | None = None
+    summary: str | None = None
+    total: str | None = None
+    items: list[ShipmentItem] = Field(default_factory=list)
+    prepaid: bool | None = None
 
 
 class Delivery(OzonModel):
@@ -72,17 +94,30 @@ class PickupPoint(OzonModel):
 
 
 class PayAfterReceipt(OzonModel):
-    """Ozon's "pay on delivery for part of the order" switch.
+    """Ozon's pay-on-delivery switch, and how much of the order it covers.
 
     A real toggle, not just a status: ``enabled`` mirrors the checkbox and
-    ``set_pay_after_receipt`` flips it. ``prepayment`` is what still has to be
-    paid up front when it is on.
+    ``configure_checkout`` flips it. It does not always cover everything — some
+    items (imports, long-delivery FBS lines) have to be paid up front, and then
+    Ozon offers the switch for the rest of the order only. ``scope`` says which
+    case this is:
+
+    - ``full`` — the whole order can be paid on delivery
+    - ``partial`` — only part of it; ``prepayment_amount`` is charged now
+    - ``none`` — Ozon does not offer pay-on-delivery for this order at all
+
+    The amounts are what is charged when the switch is on, so they are stated
+    only then; with it off the whole order is prepaid by definition.
     """
 
     available: bool = False
     enabled: bool = False
+    scope: str = "none"
     label: str | None = None
     prepayment: str | None = None
+    prepayment_amount: str | None = None
+    post_payment_amount: str | None = None
+    note: str | None = None
     toggle_link: str | None = None
 
 
@@ -119,7 +154,7 @@ class Checkout(OzonModel):
     pay_after_receipt: PayAfterReceipt = Field(default_factory=PayAfterReceipt)
     installment: str | None = None
     deliveries: list[Delivery] = Field(default_factory=list)
-    parts: list[DeliveryPart] = Field(default_factory=list)
+    shipments: list[Shipment] = Field(default_factory=list)
     points: list[PointsOption] = Field(default_factory=list)
     totals: Totals = Field(default_factory=Totals)
     place_order_action: str | None = None
