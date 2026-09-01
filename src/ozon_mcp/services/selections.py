@@ -17,8 +17,6 @@ different placements of the same call, and passing the wrong one silently
 creates a second selection instead of changing the first.
 """
 
-from __future__ import annotations
-
 import re
 from typing import Any, Final
 

@@ -2,8 +2,6 @@
 ``settings``). Kept here as ``Final`` so call sites read intent, not magic.
 """
 
-from __future__ import annotations
-
 from typing import Final
 
 HOME_URL: Final = "https://www.ozon.ru/"

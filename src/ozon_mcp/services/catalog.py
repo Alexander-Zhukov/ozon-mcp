@@ -1,10 +1,8 @@
 """Catalog + purchase-history read services."""
 
-from __future__ import annotations
-
 import base64
 import re
-from typing import TYPE_CHECKING
+from typing import Final
 
 from ozon_mcp.constants import (
     PURCHASE_SORTS,
@@ -24,19 +22,16 @@ from ozon_mcp.models.catalog import (
     SearchFilter,
     Tile,
 )
+from ozon_mcp.models.orders import OrderProduct
 from ozon_mcp.parsing import catalog as parse
 from ozon_mcp.parsing.common import declared_counter, next_pages
-from ozon_mcp.parsing.orders import order_numbers_from_link, parse_order_products
+from ozon_mcp.parsing.orders import ORDER_NUMBER_RE, order_numbers_from_link, parse_order_products
 from ozon_mcp.utils.serde import dumps
 
-if TYPE_CHECKING:
-    from ozon_mcp.models.orders import OrderProduct
+_MAX_TILE_PAGES: Final = 200
 
-_MAX_TILE_PAGES = 200
 
-_ORDER_NUMBER_RE = re.compile(r"\d{6,}-\d{3,}")
-
-_DELIVERY_JS = r"""() => {
+_DELIVERY_JS: Final = r"""() => {
   const m = (document.body.innerText || '').match(
     /Доставим[^\n]{0,40}|Доставка[^\n]{0,40}|Послезавтра|Завтра|Сегодня/);
   return m ? m[0].trim() : null;
@@ -171,7 +166,7 @@ def order_products(order: str) -> list[OrderProduct]:
     list_orders, which encodes the parcels the row covers.
     """
     session = get_session()
-    numbers = [order] if _ORDER_NUMBER_RE.fullmatch(order.strip()) else order_numbers_from_link(order)
+    numbers = [order] if ORDER_NUMBER_RE.fullmatch(order.strip()) else order_numbers_from_link(order)
     products: list[OrderProduct] = []
     seen: set[str] = set()
     for number in numbers:

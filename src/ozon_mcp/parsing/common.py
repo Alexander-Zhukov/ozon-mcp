@@ -6,19 +6,15 @@ best-effort (deep search by key rather than fixed paths) so it survives layout
 churn.
 """
 
-from __future__ import annotations
-
 import re
-from typing import TYPE_CHECKING, Any
+from collections.abc import Iterator
+from typing import Any, Final
 
 from ozon_mcp.utils.serde import dumps, loads
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-
-PRICE_RE = re.compile(r"\d[\d\s\u00a0\u2009]*\s?₽")
-PRICE_WITH_KOPECKS_RE = re.compile(r"\d[\d\s\u00a0\u2009]*,\d{2}\s?₽")
-IMAGE_RE = re.compile(r"https://ir\.ozone\.ru/[^\"\\]+?\.(?:jpg|jpeg|png|webp)")
+PRICE_RE: Final = re.compile(r"\d[\d\s\u00a0\u2009]*\s?₽")
+PRICE_WITH_KOPECKS_RE: Final = re.compile(r"\d[\d\s\u00a0\u2009]*,\d{2}\s?₽")
+IMAGE_RE: Final = re.compile(r"https://ir\.ozone\.ru/[^\"\\]+?\.(?:jpg|jpeg|png|webp)")
 
 
 def widget(data: dict[str, Any], prefix: str) -> Any:

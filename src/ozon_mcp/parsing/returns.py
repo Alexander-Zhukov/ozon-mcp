@@ -7,8 +7,6 @@ FAQ. Reading the page and taking its titles therefore reported «Почему т
 reported none of them.
 """
 
-from __future__ import annotations
-
 import re
 from typing import Any, Final
 

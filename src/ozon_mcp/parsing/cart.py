@@ -1,7 +1,5 @@
 """Parse cart widgets into DTOs."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from ozon_mcp.models.cart import Cart, CartItem

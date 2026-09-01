@@ -1,7 +1,5 @@
 """Parse order widgets into DTOs, including archive dates."""
 
-from __future__ import annotations
-
 import base64
 import datetime
 import re
@@ -88,7 +86,9 @@ def parse_ru_date(text: object) -> str | None:
     return parsed.isoformat()
 
 
-_ORDER_PARAM_RE = re.compile(r"[?&]order=(\d{6,}-\d{3,})")
+# An order number as Ozon writes it: "44563249-0877".
+ORDER_NUMBER_RE: Final = re.compile(r"\d{6,}-\d{3,}")
+_ORDER_PARAM_RE: Final = re.compile(r"[?&]order=(\d{6,}-\d{3,})")
 
 
 def order_numbers_in(row: Any) -> list[str]:
@@ -151,7 +151,7 @@ def parse_orders(data: dict[str, Any]) -> list[Order]:
     return orders
 
 
-_PRODUCT_LINK_RE = re.compile(r"/product/(?:[a-z0-9\-]+-)?(\d{6,})")
+_PRODUCT_LINK_RE: Final = re.compile(r"/product/(?:[a-z0-9\-]+-)?(\d{6,})")
 
 
 def _atom(value: Any) -> str | None:

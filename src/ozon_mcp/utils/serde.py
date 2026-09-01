@@ -7,8 +7,6 @@ without being asked, and it returns bytes — these wrappers hand back ``str``,
 which is what every caller wants.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import orjson

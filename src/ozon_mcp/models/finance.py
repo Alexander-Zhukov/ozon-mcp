@@ -1,8 +1,6 @@
 """Finance DTOs: card balance, points, seller bonuses."""
 
-from __future__ import annotations
-
-from pydantic import field_validator
+from pydantic import Field, field_validator
 
 from ozon_mcp.models.base import OzonModel
 
@@ -38,10 +36,10 @@ class SellerBonus(OzonModel):
 
 class SellerBonuses(OzonModel):
     total: int | None = None
-    items: list[SellerBonus] = []
+    items: list[SellerBonus] = Field(default_factory=list)
 
 
 class Points(OzonModel):
-    by_type: list[PointType] = []
-    burning: list[str] = []
+    by_type: list[PointType] = Field(default_factory=list)
+    burning: list[str] = Field(default_factory=list)
     seller_bonuses: SellerBonuses = SellerBonuses()

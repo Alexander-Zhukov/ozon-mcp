@@ -1,7 +1,5 @@
 """DTOs that are not specific to one domain."""
 
-from __future__ import annotations
-
 from ozon_mcp.models.base import OzonModel
 
 

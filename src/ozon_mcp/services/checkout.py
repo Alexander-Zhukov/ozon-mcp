@@ -12,15 +12,15 @@ Placing an order spends real money, so it sits behind its own flag
 (``OZON_ENABLE_ORDERS``) rather than the general write flag.
 """
 
-from __future__ import annotations
-
 import re
 import time
 from itertools import combinations
-from typing import TYPE_CHECKING, Any, Final
+from typing import Any, Final
 
 from ozon_mcp.dependencies import get_session
 from ozon_mcp.errors import OrdersDisabledError, OzonError, TotalMismatchError
+from ozon_mcp.models.checkout import Checkout, Delivery, OrderPlaced, PaymentOption, PickupPoint
+from ozon_mcp.models.enums import PostPaymentScope
 from ozon_mcp.parsing.checkout import (
     parse_checkout,
     parse_pickup_points,
@@ -34,11 +34,6 @@ from ozon_mcp.parsing.checkout import (
 from ozon_mcp.parsing.common import widget
 from ozon_mcp.settings import get_settings
 from ozon_mcp.utils.money import to_kopecks
-
-if TYPE_CHECKING:
-    from ozon_mcp.models.checkout import Delivery, PaymentOption, PickupPoint
-
-from ozon_mcp.models.checkout import Checkout, OrderPlaced
 
 # The checkout body lives in the entrypoint "second container", like the product
 # description and the search facets.
@@ -177,7 +172,7 @@ def _read(
             delivery.pickup_points = parse_pickup_points(state) if state is not None else []
     if checkout.available:
         _read_prepayment_split(checkout, data)
-    partial = checkout.pay_after_receipt.scope == "partial"
+    partial = checkout.pay_after_receipt.scope is PostPaymentScope.PARTIAL
     if checkout.available and (partial if with_shipments is None else with_shipments):
         _fill_shipments(checkout, data)
         if checkout.pay_after_receipt.pay_now_items:

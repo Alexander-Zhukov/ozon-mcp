@@ -18,8 +18,6 @@ cookies rotated on the HTTP side are pushed back into the live context: Chrome
 then flushes them to disk, and the refresh chain survives a restart.
 """
 
-from __future__ import annotations
-
 import logging
 import re
 import secrets
@@ -27,7 +25,8 @@ import shutil
 import threading
 import time
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, Final, Self
+from pathlib import Path
+from typing import Any, Final, Self
 from urllib.parse import quote
 
 from curl_cffi import requests as curl_requests
@@ -47,12 +46,9 @@ from ozon_mcp.settings import get_settings
 from ozon_mcp.utils.observability import BROWSER_ACTIVE, SESSION_BOOTSTRAPS, UPSTREAM_LATENCY, UPSTREAM_REQUESTS
 from ozon_mcp.utils.serde import dumps, loads
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 logger = logging.getLogger("ozon_mcp")
 
-_ANTIBOT = re.compile(r"antibot|ограничен|нет соединения|доступ", re.IGNORECASE)
+_ANTIBOT: Final = re.compile(r"antibot|ограничен|нет соединения|доступ", re.IGNORECASE)
 # Cookies that carry the login; only these are worth syncing back to the browser.
 _SESSION_COOKIES: Final[frozenset[str]] = frozenset({
     "__Secure-access-token",
