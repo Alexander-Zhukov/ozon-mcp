@@ -394,9 +394,12 @@ def _digits(value: str | None) -> str:
 def place_order(confirm_total: str) -> OrderPlaced:
     """Submit the order — this spends money and is not undoable from here.
 
-    ``confirm_total`` must match the total Ozon is currently charging, so a
-    stale plan cannot silently pay a different amount. Compared on digits only,
-    since the string carries spaces, ₽ and a "сегодня" suffix.
+    ``confirm_total`` must match what Ozon is charging, so a stale plan cannot
+    silently pay a different amount. Either figure is accepted — what the order
+    costs (``order_total``) or what is charged today (``total``) — because on a
+    deferred order today's charge is 0 ₽, and requiring that one would have the
+    caller confirm "0 ₽" for an order of several thousand. Compared on digits
+    only, since the strings carry spaces, ₽ and a "сегодня" suffix.
 
     Creation is asynchronous: the action is re-called until it returns the order
     instead of another polling instruction, so this comes back only once the
@@ -414,8 +417,10 @@ def place_order(confirm_total: str) -> OrderPlaced:
         msg = checkout.reason or "no order to place"
         raise OzonError(msg)
     actual = checkout.totals.total
-    if _digits(confirm_total) != _digits(actual):
-        raise TotalMismatchError(confirm_total, actual)
+    order_total = checkout.totals.order_total
+    confirmed = _digits(confirm_total)
+    if confirmed not in {_digits(actual), _digits(order_total)}:
+        raise TotalMismatchError(confirm_total, order_total or actual)
 
     session = get_session()
     for _ in range(_ORDER_POLL_ATTEMPTS):

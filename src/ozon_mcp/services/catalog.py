@@ -18,6 +18,7 @@ from ozon_mcp.dependencies import get_session
 from ozon_mcp.errors import OzonError
 from ozon_mcp.models.catalog import (
     Cheaper,
+    DeliveryEstimate,
     Description,
     ProductCard,
     Reviews,
@@ -132,7 +133,7 @@ def get_description(sku_or_url: str) -> Description:
     return parse.parse_description(sku, data)
 
 
-def delivery_estimate(sku_or_url: str) -> dict[str, str | None]:
+def delivery_estimate(sku_or_url: str) -> DeliveryEstimate:
     """Delivery estimate for a product, relative to the account's address.
 
     Served by the per-widget endpoint, which is ~100x faster than rendering the
@@ -145,9 +146,9 @@ def delivery_estimate(sku_or_url: str) -> dict[str, str | None]:
     ).decode()
     state = get_session().widget_state(WEB_DELIVERY_STATE_ID, async_data).get("state")
     if state:
-        return {"sku": sku, **parse.parse_delivery_widget(state)}
+        return DeliveryEstimate(sku=sku, **parse.parse_delivery_widget(state))
     delivery = get_session().page_extract(f"/product/{sku}/", _DELIVERY_JS)
-    return {"sku": sku, "delivery": delivery, "address": None, "source": None}
+    return DeliveryEstimate(sku=sku, delivery=delivery)
 
 
 def find_cheaper(sku_or_url: str, limit: int = 10) -> Cheaper:

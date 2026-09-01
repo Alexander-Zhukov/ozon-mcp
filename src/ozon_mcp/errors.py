@@ -12,7 +12,9 @@ class WritesDisabledError(OzonError):
 
     def __init__(self) -> None:
         super().__init__(
-            "Account-mutating tools are disabled. Set OZON_ENABLE_WRITES=1 to allow cart / favorites / list changes."
+            "Account-mutating tools are disabled: the cart, favorites and lists cannot be changed. "
+            "This is the operator's setting (OZON_ENABLE_WRITES=1) and no tool can change it — "
+            "say so instead of retrying, and read session_status() to see both gates upfront."
         )
 
 
@@ -22,7 +24,11 @@ class OrdersDisabledError(OzonError):
     """
 
     def __init__(self) -> None:
-        super().__init__("Order placement is disabled; set OZON_ENABLE_ORDERS=1 to allow it.")
+        super().__init__(
+            "Placing an order is disabled, separately from other writes, because it spends real money. "
+            "This is the operator's setting (OZON_ENABLE_ORDERS=1) and no tool can change it: the order can "
+            "still be composed and priced with get_checkout(), but not submitted. Report that and stop."
+        )
 
 
 class TotalMismatchError(OzonError):
@@ -34,7 +40,11 @@ class TotalMismatchError(OzonError):
     """
 
     def __init__(self, expected: str, actual: str | None) -> None:
-        super().__init__(f"order total is {actual!r}, not the confirmed {expected!r}; re-read get_checkout()")
+        super().__init__(
+            f"the order now costs {actual!r}, not the confirmed {expected!r} — Ozon recalculated it. "
+            "Nothing was ordered. Re-read get_checkout(), show the user totals.order_total, and "
+            "call place_order() again with the figure they agreed to."
+        )
 
 
 class SessionExpiredError(OzonError):

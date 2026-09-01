@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from ozon_mcp.dependencies import get_session
 from ozon_mcp.errors import OzonError, WritesDisabledError
+from ozon_mcp.models.common import WriteResult
 from ozon_mcp.parsing.cart import parse_cart
 from ozon_mcp.parsing.common import next_page
 from ozon_mcp.settings import get_settings
@@ -74,17 +75,31 @@ def get_cart() -> Cart:
     return cart
 
 
-def set_cart_quantity(sku: str, quantity: int) -> dict[str, Any]:
+def set_cart_quantity(sku: str, quantity: int) -> WriteResult:
+    """Set how many of a product are in the cart; 0 removes it.
+
+    The result is read back from the cart instead of taken from Ozon's answer,
+    which reports nothing either way: adding an unknown SKU, asking for more
+    than exists and a change that worked all return the same fragment. The
+    ordinary mistakes are exactly the silent ones — a base apparel SKU with no
+    size chosen, a product out of stock — so the cart is what settles it.
+    """
     _require_writes()
-    return get_session().action("v2/addToCart", [{"id": int(sku), "quantity": quantity}])
-
-
-def add_to_cart(sku: str, quantity: int = 1) -> dict[str, Any]:
-    return set_cart_quantity(sku, quantity)
-
-
-def remove_from_cart(sku: str) -> dict[str, Any]:
-    return set_cart_quantity(sku, 0)
+    get_session().action("v2/addToCart", [{"id": int(sku), "quantity": quantity}])
+    found = next((item for item in get_cart().items if item.id == str(sku)), None)
+    in_cart = found.quantity if found else 0
+    if in_cart == quantity:
+        return WriteResult()
+    if found is None:
+        return WriteResult(
+            ok=False,
+            detail=(
+                f"the cart holds no {sku} — Ozon accepted the call and changed nothing. "
+                "For apparel use the variant SKU from product_details(); otherwise the product "
+                "is out of stock or not orderable."
+            ),
+        )
+    return WriteResult(ok=False, detail=f"the cart holds {in_cart}, not the requested {quantity}")
 
 
 def _send_selection(mode: str, skus: list[str] | None = None) -> None:

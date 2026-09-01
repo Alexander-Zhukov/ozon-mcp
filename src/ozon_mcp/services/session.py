@@ -11,18 +11,32 @@ from __future__ import annotations
 
 from ozon_mcp.dependencies import get_session
 from ozon_mcp.models.session import LoginStep, SessionStatus
+from ozon_mcp.settings import get_settings
 
 
 def session_status() -> SessionStatus:
-    """Whether the stored session still acts as the account."""
+    """Whether the stored session still acts as the account, and what is allowed.
+
+    The gates are reported alongside, because a caller that learns halfway
+    through a plan that it may not place the order has already spent the work.
+    """
     session = get_session()
+    settings = get_settings()
     user = session.signed_in_user()
     backup = session.has_backup()
     if user:
-        return SessionStatus(signed_in=True, user_id=user, backup_available=backup)
+        return SessionStatus(
+            signed_in=True,
+            user_id=user,
+            backup_available=backup,
+            writes_enabled=settings.enable_writes,
+            orders_enabled=settings.enable_orders,
+        )
     return SessionStatus(
         signed_in=False,
         backup_available=backup,
+        writes_enabled=settings.enable_writes,
+        orders_enabled=settings.enable_orders,
         detail=(
             "signed out; a kept profile copy is tried automatically on the next call"
             if backup
@@ -44,15 +58,20 @@ def start_login(login: str) -> LoginStep:
 def submit_login_code(code: str) -> SessionStatus:
     """Finish the login with the code Ozon sent, and keep a copy of the profile."""
     session = get_session()
+    settings = get_settings()
     if not session.complete_login(code):
         return SessionStatus(
             signed_in=False,
             backup_available=session.has_backup(),
             detail="the code was not accepted; request a new one with start_login()",
+            writes_enabled=settings.enable_writes,
+            orders_enabled=settings.enable_orders,
         )
     return SessionStatus(
         signed_in=True,
         user_id=session.signed_in_user(),
         backup_available=session.has_backup(),
         detail="signed in; the profile was backed up",
+        writes_enabled=settings.enable_writes,
+        orders_enabled=settings.enable_orders,
     )

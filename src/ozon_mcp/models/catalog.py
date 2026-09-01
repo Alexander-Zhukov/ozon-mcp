@@ -97,3 +97,16 @@ class SearchFilter(OzonModel):
 class Cheaper(OzonModel):
     base: dict[str, str | None]
     cheaper: list[Tile] = []
+
+
+class DeliveryEstimate(OzonModel):
+    """When a product would arrive, and what that estimate is relative to.
+
+    The date means nothing without the address it was computed for, so both are
+    returned together; ``source`` is the warehouse Ozon would ship it from.
+    """
+
+    sku: str
+    delivery: str | None = None
+    address: str | None = None
+    source: str | None = None
