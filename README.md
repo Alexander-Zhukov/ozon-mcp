@@ -54,6 +54,8 @@ a persistent browser profile seeded by one interactive login.
 | `place_order` | **Spends money** — submit, waiting until the order exists (gated by `OZON_ENABLE_ORDERS`) |
 | `list_cancel_reasons` | Reasons Ozon accepts for cancelling an order |
 | `cancel_order` | Cancel an order, returning items to the cart (gated) |
+| `session_status` | Whether the stored session still acts as the account |
+| `start_login` / `submit_login_code` | Restore a dead session with a one-time code |
 | `get_finances` | Ozon Card balance and total points |
 | `get_points` | Points by type + burning + per-store seller bonuses |
 
@@ -61,6 +63,14 @@ Mutation tools are **disabled by default** — set `OZON_ENABLE_WRITES=1` to all
 them.
 
 ## Session and state
+
+**If the session dies, the tools say so.** A signed-out session otherwise looks
+exactly like an empty account — no orders, no balances, no explanation — so every
+tool raises instead of answering, `session_status` reports the state, and
+`start_login` / `submit_login_code` restore it with a one-time code. A profile
+that is known to be signed in is copied, and a sign-out is recovered from that
+copy automatically, so in most cases nobody is asked for a code at all.
+
 
 The session lives in a **persistent Chromium profile**, not a cookie snapshot.
 That is deliberate: OzonID — the auth realm guarding checkout — keeps its

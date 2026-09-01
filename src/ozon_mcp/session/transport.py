@@ -26,6 +26,7 @@ import re
 import shutil
 import threading
 import time
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any, Final, Self
 from urllib.parse import quote
 
@@ -41,6 +42,7 @@ from ozon_mcp.constants import (
     LAUNCH_ARGS,
     WIDGET_URL,
 )
+from ozon_mcp.errors import OzonError, SessionExpiredError
 from ozon_mcp.settings import get_settings
 from ozon_mcp.utils.observability import BROWSER_ACTIVE, SESSION_BOOTSTRAPS, UPSTREAM_LATENCY, UPSTREAM_REQUESTS
 
@@ -89,6 +91,7 @@ class OzonSession:
         self._http: Any = None
         self._headers: dict[str, str] = {}
         self._synced: dict[str, str] = {}
+        self._logging_in = False
         self._last_used = 0.0
 
     # -- browser lifecycle ---------------------------------------------------
@@ -201,11 +204,15 @@ class OzonSession:
     def _bootstrap(self, reason: str = "initial") -> None:
         SESSION_BOOTSTRAPS.labels(reason=reason).inc()
         self._launch_browser()
-        if not self._browser_is_signed_in() and self.restore_profile():
+        if not self._browser_is_signed_in():
             # A page signed the profile out; put the kept copy back rather than
             # asking the account owner for another code.
-            SESSION_BOOTSTRAPS.labels(reason="restored").inc()
-            self._launch_browser()
+            if self.restore_profile():
+                SESSION_BOOTSTRAPS.labels(reason="restored").inc()
+                self._launch_browser()
+            if not self._browser_is_signed_in() and not self._logging_in:
+                # Answering anyway would look like an empty account.
+                raise SessionExpiredError
         captured: dict[str, str] = {}
 
         def on_request(request: Any) -> None:
@@ -382,6 +389,87 @@ class OzonSession:
                     self._page.wait_for_timeout(1500)
             self._last_used = time.time()
             return self._page.evaluate(js)
+
+    # -- interactive login ---------------------------------------------------
+    def _auth_frame(self) -> Any:
+        """OzonID renders the login in an iframe; wait for it to appear."""
+        for _ in range(30):
+            for frame in self._page.frames:
+                if "ozonid" in (frame.url or ""):
+                    return frame
+            self._page.wait_for_timeout(1000)
+        msg = "OzonID login frame never appeared"
+        raise OzonError(msg)
+
+    def begin_login(self, login: str) -> str:
+        """Open the login form and ask Ozon to send a one-time code.
+
+        The code is delivered out of band, so this returns as soon as it has
+        been requested; ``complete_login`` finishes the job.
+        """
+        with self._lock:
+            self._logging_in = True
+            self._close_browser()
+            self._launch_browser()
+            self._page.goto(HOME_URL + "my/orderlist", wait_until="domcontentloaded", timeout=60_000)
+            self._page.wait_for_timeout(6_000)
+            self._page.get_by_role("button", name="войти", exact=False).first.click(timeout=15_000)
+            frame = self._auth_frame()
+            self._page.wait_for_timeout(2_500)
+            by_mail = "@" in login
+            if by_mail:
+                frame.get_by_text("Войти по почте", exact=False).first.click(timeout=8_000)
+                self._page.wait_for_timeout(2_500)
+                frame = self._auth_frame()
+                frame.locator("input[type=email]").first.fill(login)
+            else:
+                frame.locator("input").first.fill(login)
+            frame.get_by_role("button", name="Войти", exact=True).first.click(timeout=8_000)
+            self._page.wait_for_timeout(5_000)
+            return "email" if by_mail else "phone"
+
+    def complete_login(self, code: str) -> bool:
+        """Type the one-time code and report whether the account is signed in.
+
+        OZON's code field stays ``disabled`` and updates from a React handler on
+        that very input, so digits only register if the input is the event
+        target: it is enabled and focused first, then real keystrokes are sent.
+        """
+        with self._lock:
+            frame = self._auth_frame()
+            frame.evaluate(
+                "() => { const el = document.querySelector('input');"
+                " if (el) { el.disabled = false; el.removeAttribute('disabled'); el.focus(); } }"
+            )
+            self._page.keyboard.type(re.sub(r"\D", "", code), delay=140)
+            self._page.wait_for_timeout(1_500)
+            with suppress(Exception):
+                button = frame.get_by_role("button", name="Войти", exact=True).first
+                if button.is_enabled(timeout=1_500):
+                    button.click(timeout=2_500)
+            for _ in range(20):
+                self._page.wait_for_timeout(1_000)
+                if not any("ozonid" in (frame.url or "") for frame in self._page.frames):
+                    break
+            self._page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
+            self._page.wait_for_timeout(4_000)
+            signed_in = self._browser_is_signed_in()
+            if signed_in:
+                self.back_up_profile()
+                self._http = None
+            self._logging_in = not signed_in
+            return signed_in
+
+    def signed_in_user(self) -> str | None:
+        """The account id the profile currently holds, if any."""
+        with self._lock:
+            self._ensure_browser()
+            cookie = next((c for c in self._context.cookies() if c["name"] == "__Secure-user-id"), None)
+            value = (cookie or {}).get("value")
+            return str(value) if value and value != _GUEST_USER_ID else None
+
+    def has_backup(self) -> bool:
+        return (self._backup / "Default").exists()
 
     # -- helpers -------------------------------------------------------------
     @staticmethod
