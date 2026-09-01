@@ -11,7 +11,7 @@ import logging
 import uvicorn
 from starlette.routing import Route
 
-from ozon_mcp.server import mcp
+from ozon_mcp.main import mcp
 from ozon_mcp.settings import get_settings
 from ozon_mcp.utils.observability import METRICS_PATH, metrics_endpoint
 
