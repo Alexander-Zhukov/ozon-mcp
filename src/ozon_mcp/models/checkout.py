@@ -157,13 +157,16 @@ class OrderCancelled(OzonModel):
 class PaymentRequested(OzonModel):
     """Where a card payment stands after asking Ozon to charge it.
 
-    Ozon runs the charge on its bank domain, which asks for the account's bank
-    passcode — a credential this server neither holds nor should. So the chain is
-    driven as far as it goes and ``payment_url`` is handed back for a person to
-    finish; ``needs_bank_passcode`` says that is what is waiting.
+    The charge runs on Ozon's bank domain, which signs the account in to the
+    bank before it will settle — a credential this server neither holds nor
+    should. So the useful answer is not "paid" but exactly what is left to do:
+    how much is due, whether the card balance covers it, and where to finish.
     """
 
     order_number: str
+    amount_due: str | None = None
+    shortfall: str | None = None
     payment_url: str | None = None
     needs_bank_passcode: bool = False
+    next_step: str | None = None
     detail: str | None = None

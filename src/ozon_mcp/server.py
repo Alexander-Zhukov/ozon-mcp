@@ -289,11 +289,15 @@ async def place_order(confirm_total: str) -> OrderPlaced:
 
 @mcp.tool()
 async def pay_order(order: str) -> PaymentRequested:
-    """[GATED] Ask Ozon to charge an order left in «Ожидаем оплаты».
-    Returns the page where the charge is completed. That page is on Ozon's bank
-    domain and asks for the account's bank passcode, so hand `payment_url` to the
-    user — this server does not hold banking credentials.
-    Ordering with pay-on-delivery avoids this entirely.
+    """[GATED] Ask Ozon to charge an order left in «Ожидаем оплаты», and report
+    what the user must still do.
+    The result spells it out: `amount_due` is the charge, `shortfall` is set when
+    the Ozon Card balance does not cover it (top up by that much), and
+    `next_step` is the instruction to relay. `payment_url` is where the payment
+    is completed — that page signs the account in to Ozon Bank, which is the
+    owner's step, so this server never finishes the charge itself.
+    Tell the user plainly: top up by `shortfall` if present, then finish at
+    `payment_url`. Ordering with pay-on-delivery avoids all of it.
     """
     return await run_blocking(lambda: orders.pay_order(order))
 
