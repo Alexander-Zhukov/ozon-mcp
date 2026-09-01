@@ -40,9 +40,16 @@ _INIT_CHECKOUT_ACTION: Final = "initCheckoutState"
 # another polling instruction.
 _ORDER_POLL_ATTEMPTS: Final = 40
 
-# Ozon names the methods in English internals only, but a person says "СБП" or
-# "ЮMoney" — so map the words onto the `kind` the payload carries.
+# Ozon names the methods in English internals only, but a person says "СБП",
+# "Ozon Банк" or "ЮMoney" — so map those words onto the `kind` the payload
+# carries. Which methods are offered changes with the order's state: Ozon Card
+# appears once pay-on-delivery is off, and the fast-payment option drops out.
 _PAYMENT_ALIASES: Final[dict[str, str]] = {
+    "озон карт": "ozoncard",
+    "ozon карт": "ozoncard",
+    "озон банк": "ozoncard",
+    "ozon банк": "ozoncard",
+    "ozon bank": "ozoncard",
     "сбп": "fastpaymentsystem",
     "быстры": "fastpaymentsystem",
     "fast": "fastpaymentsystem",
@@ -77,6 +84,19 @@ def _with_container(link: str) -> str:
     return f"{link}{joiner}{_CONTAINER}"
 
 
+def _apply(link: str) -> Checkout:
+    """Press one of the checkout's own control links and re-read the result.
+
+    These controls are POSTs to the entrypoint page, not GETs: fetched instead,
+    Ozon answers with a page that looks right and has changed nothing.
+    ``page_changed`` is what the site sends alongside, and Ozon needs it to
+    recompute the order.
+    """
+    joiner = "&" if "?" in link else "?"
+    get_session().post_page(f"{link}{joiner}page_changed=true", {}, backend="entrypoint")
+    return _read(with_points=False)
+
+
 def _match_pickup(points: list[PickupPoint], wanted: str) -> PickupPoint:
     """Resolve a pickup point from whatever the user actually said.
 
@@ -100,14 +120,14 @@ def _match_pickup(points: list[PickupPoint], wanted: str) -> PickupPoint:
     raise OzonError(msg)
 
 
-def _match_payment(options: list[PaymentOption], wanted: str) -> int:
+def _match_payment_option(options: list[PaymentOption], wanted: str) -> PaymentOption:
     """Resolve a payment method from a word, a masked card, or the raw id."""
     needle = wanted.strip().casefold()
     known_types = {option.payment_type for option in options if option.payment_type is not None}
     # A bare number is an id only if the order actually offers it; otherwise it
     # is a card number, which can look just as short (2044 vs 5898).
     if needle.isdigit() and int(needle) in known_types:
-        return int(needle)
+        return next(option for option in options if option.payment_type == int(needle))
 
     # A masked card: compare digits only, since Ozon writes the label "** 5898".
     digits = "".join(ch for ch in needle if ch.isdigit())
@@ -115,7 +135,7 @@ def _match_payment(options: list[PaymentOption], wanted: str) -> int:
         for option in options:
             label_digits = "".join(ch for ch in (option.label or "") if ch.isdigit())
             if label_digits and label_digits == digits and option.payment_type is not None:
-                return option.payment_type
+                return option
 
     target_kind = next((kind for alias, kind in _PAYMENT_ALIASES.items() if alias in needle), None)
     for option in options:
@@ -124,9 +144,9 @@ def _match_payment(options: list[PaymentOption], wanted: str) -> int:
         if option.payment_type is None:
             continue
         if target_kind and kind == target_kind:
-            return option.payment_type
+            return option
         if needle and (needle in kind or needle in label):
-            return option.payment_type
+            return option
 
     known = "; ".join(f"{o.payment_type}={o.kind or ''} {o.label or ''}".strip() for o in options)
     msg = f"no payment method matches {wanted!r}; available: {known}"
@@ -195,7 +215,9 @@ def configure_checkout(
     change what payment is possible), then payment, then the pay-on-delivery
     switch, then points.
     """
-    checkout = _read(with_points=False)
+    # Same entry point as get_checkout: Ozon may not have formed the order yet,
+    # and a plain read of an unformed checkout reports every option as absent.
+    checkout = get_checkout()
     if not checkout.available:
         return checkout
 
@@ -207,16 +229,49 @@ def configure_checkout(
         if link is None:
             msg = f"pickup point {chosen.address} is not selectable for this shipment"
             raise OzonError(msg)
-        checkout = _read(_with_container(link), with_points=False)
+        checkout = _apply(link)
     if payment is not None:
-        payment_type = _match_payment(checkout.payment_options, payment)
-        checkout = _read(f"/gocheckout?payment_type={payment_type}&set_payment=0&{_CONTAINER}", with_points=False)
+        option = _match_payment_option(checkout.payment_options, payment)
+        if option.apply_link:
+            checkout = _apply(option.apply_link)
     if pay_after_receipt is not None:
-        disabled = 0 if pay_after_receipt else 1
-        checkout = _read(f"/gocheckout?post_payment_disabled={disabled}&set_payment=0&{_CONTAINER}", with_points=False)
+        checkout = _set_pay_after_receipt(checkout, enabled=pay_after_receipt)
     if points is not None:
-        checkout = _read(f"/gocheckout?points_applied={points}.00&set_payment=0&{_CONTAINER}", with_points=False)
+        checkout = _set_points(checkout, points)
     return _read()
+
+
+def _set_pay_after_receipt(checkout: Checkout, *, enabled: bool) -> Checkout:
+    switch = checkout.pay_after_receipt
+    if not switch.available:
+        # Spending points and paying on delivery are mutually exclusive, and
+        # Ozon simply hides the switch rather than explaining why.
+        spending = next((option for option in checkout.points if option.selected and option.amount), None)
+        because = f" — points are being spent ({spending.amount}); clear them with points=0 first" if spending else ""
+        msg = f"pay-on-delivery is not offered for this order{because}"
+        raise OzonError(msg)
+    # The link flips whatever state it finds, so press it only when the current
+    # state is not the one asked for.
+    if switch.enabled == enabled or not switch.toggle_link:
+        return checkout
+    return _apply(switch.toggle_link)
+
+
+def _set_points(checkout: Checkout, points: int) -> Checkout:
+    """Spend a given number of points, or none at all when passed 0.
+
+    Ozon drops the apply link from whichever choice is already active, so a
+    missing link means "already there" far more often than "not allowed" —
+    treating it as an error would refuse a request that is in fact satisfied.
+    """
+    wanted = next((option for option in checkout.points if (option.amount or 0) == points), None)
+    if wanted is None:
+        offered = ", ".join(str(option.amount or 0) for option in checkout.points)
+        msg = f"Ozon does not offer spending {points} points here; offered: {offered or 'none'}"
+        raise OzonError(msg)
+    if wanted.selected or not wanted.apply_link:
+        return checkout
+    return _apply(wanted.apply_link)
 
 
 def _digits(value: str | None) -> str:
@@ -233,6 +288,11 @@ def place_order(confirm_total: str) -> OrderPlaced:
     Creation is asynchronous: the action is re-called until it returns the order
     instead of another polling instruction, so this comes back only once the
     order actually exists.
+
+    **Known gap:** with a card payment the order is created but left "Ожидаем
+    оплаты" — Ozon expects a further authorisation step
+    (``payfacadeGatewayAuthorizePayment``) that is not implemented, and no order
+    number comes back. Pay-on-delivery completes fully.
     """
     if not get_settings().enable_orders:
         raise OrdersDisabledError
@@ -252,11 +312,7 @@ def place_order(confirm_total: str) -> OrderPlaced:
         if isinstance(created, dict):
             link = str(created.get("link") or "")
             number = re.search(r"orderNumber=([\w\-]+)", link)
-            return OrderPlaced(
-                order_number=number.group(1) if number else None,
-                total=actual,
-                link=link or None,
-            )
+            return OrderPlaced(order_number=number.group(1) if number else None, total=actual, link=link or None)
         pooling = data.get("poolingDetails") or {}
         time.sleep((pooling.get("delay") or 500) / 1000)
     msg = "order creation did not finish in time; check the orders list before retrying"

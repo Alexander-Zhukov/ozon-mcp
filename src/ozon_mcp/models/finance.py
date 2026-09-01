@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pydantic import field_validator
+
 from ozon_mcp.models.base import OzonModel
 
 
@@ -19,8 +21,19 @@ class PointType(OzonModel):
 
 
 class SellerBonus(OzonModel):
+    """Bonus points a particular store granted.
+
+    Ozon sends the amount as a number here and as a formatted string elsewhere,
+    so it is coerced to text rather than rejected.
+    """
+
     seller: str
     amount: str | None = None
+
+    @field_validator("amount", mode="before")
+    @classmethod
+    def _as_text(cls, value: object) -> object:
+        return str(value) if isinstance(value, (int, float)) else value
 
 
 class SellerBonuses(OzonModel):

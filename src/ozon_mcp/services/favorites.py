@@ -38,8 +38,16 @@ def _require_writes() -> None:
         raise WritesDisabledError
 
 
-def list_favorites(page: int = 1) -> list[Tile]:
-    return catalog_parse.parse_tiles(get_session().fetch(f"/my/favorites?page={page}"))
+def list_favorites(limit: int = 100) -> list[Tile]:
+    """Favorites, following the scroll pagination.
+
+    The page number is not a parameter here: asking for ``?page=1`` makes Ozon
+    return the page *without* its product grid, so the first page has to be
+    requested bare and the rest followed through the embedded cursor.
+    """
+    from ozon_mcp.services.catalog import _paginate_tiles  # ruff: ignore[import-outside-top-level] - avoids a cycle
+
+    return _paginate_tiles("/my/favorites", limit)
 
 
 def check_favorite_price_drops() -> PriceDiff:
