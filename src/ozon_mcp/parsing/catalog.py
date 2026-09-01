@@ -1,9 +1,7 @@
 """Parse catalog widgets into DTOs: tiles, product cards, reviews, facets."""
 
-from __future__ import annotations
-
 import re
-from typing import Any
+from typing import Any, Final
 
 from ozon_mcp.models.catalog import (
     Characteristic,
@@ -286,8 +284,8 @@ def _facet_options(spec: dict[str, Any]) -> list[FilterOption]:
 
 # Roles Ozon assigns its own sections in cellTrackingInfo.uis; everything else
 # listed there is a delivery option.
-_ADDRESS_ROLE = "main"
-_RETURN_ROLE = "returnInfo"
+_ADDRESS_ROLE: Final = "main"
+_RETURN_ROLE: Final = "returnInfo"
 
 
 def _section_lines(section: dict[str, Any]) -> list[str]:

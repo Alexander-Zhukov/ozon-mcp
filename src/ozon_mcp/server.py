@@ -5,9 +5,7 @@ favorites / lists) are gated behind ``OZON_ENABLE_WRITES`` because they change
 the real account.
 """
 
-from __future__ import annotations
-
-from typing import Annotated
+from typing import Annotated, Final
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
@@ -52,7 +50,7 @@ from ozon_mcp.utils.annotations import (
     SkuOrUrl,
 )
 
-INSTRUCTIONS = """Read-write access to one ozon.ru buyer account: orders, purchases, returns, cart,
+INSTRUCTIONS: Final = """Read-write access to one ozon.ru buyer account: orders, purchases, returns, cart,
 favorites, collections, product cards, catalog search, checkout, Ozon Card balance and points.
 Everything acts on the signed-in account of a real person, and money is real.
 

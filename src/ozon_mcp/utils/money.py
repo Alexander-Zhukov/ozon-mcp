@@ -6,8 +6,6 @@ number of kopecks in action parameters. Anything that has to compare or subtract
 them goes through kopecks, because the rendered form is not arithmetic.
 """
 
-from __future__ import annotations
-
 import re
 from typing import Final
 

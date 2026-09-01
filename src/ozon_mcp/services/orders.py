@@ -1,23 +1,19 @@
 """Order + archive (completed-orders) services."""
 
-from __future__ import annotations
-
 import re
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Any, Final
+from typing import Any, Final
 
 from ozon_mcp.dependencies import get_session
 from ozon_mcp.errors import OzonError, WritesDisabledError
 from ozon_mcp.models.checkout import CancelReason, OrderCancelled, PaymentRequested
+from ozon_mcp.models.orders import Order, Return
 from ozon_mcp.parsing.common import find_all, walk, widget
-from ozon_mcp.parsing.orders import order_numbers_from_link, parse_orders
+from ozon_mcp.parsing.orders import ORDER_NUMBER_RE, order_numbers_from_link, parse_orders
 from ozon_mcp.parsing.returns import parse_returns
 from ozon_mcp.settings import get_settings
 from ozon_mcp.utils.money import format_money, to_kopecks
 from ozon_mcp.utils.serde import dumps, loads
-
-if TYPE_CHECKING:
-    from ozon_mcp.models.orders import Order, Return
 
 
 def _require_writes() -> None:
@@ -25,7 +21,7 @@ def _require_writes() -> None:
         raise WritesDisabledError
 
 
-_MAX_ARCHIVE_PAGES = 200
+_MAX_ARCHIVE_PAGES: Final = 200
 
 
 def _archive_pages(limit: int, stop_before: str | None = None) -> list[Order]:
@@ -93,7 +89,6 @@ _RETURNS_PATH: Final = "/my/returns?layout_container=returns-list-desktop&layout
 # The list starts at the second index: the first is the page itself.
 _FIRST_RETURN_PAGE: Final = 2
 _MAX_RETURN_PAGES: Final = 40
-_ORDER_NUMBER_RE: Final = re.compile(r"\d{6,}-\d{3,}")
 _CANCEL_MODAL_ACTION: Final = "selectCancelModalRms"
 _CANCEL_ORDER_ACTION: Final = "v2/cancelOrderRms"
 _MODAL_CONSTRUCTOR_ACTION: Final = "v2/openModalConstructorRms"
@@ -278,7 +273,7 @@ def resolve_order(order: str) -> str:
     encoded in that link, so it is decoded here instead of being demanded.
     """
     text = str(order).strip()
-    if _ORDER_NUMBER_RE.fullmatch(text):
+    if ORDER_NUMBER_RE.fullmatch(text):
         return text
     number = next(iter(order_numbers_from_link(text)), None)
     if number:

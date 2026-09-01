@@ -7,10 +7,8 @@ per-shipment dates; ``total`` the money rows plus the create-order action;
 ``premiumPointsToggle`` the points choices.
 """
 
-from __future__ import annotations
-
 import re
-from typing import Any
+from typing import Any, Final
 
 from ozon_mcp.models.checkout import (
     Checkout,
@@ -24,23 +22,24 @@ from ozon_mcp.models.checkout import (
     TotalRow,
     Totals,
 )
+from ozon_mcp.models.enums import PostPaymentScope
 from ozon_mcp.parsing.common import PRICE_RE, find_all, layout_widgets, walk, widget, widgets_all
 from ozon_mcp.utils.money import KOPECKS, format_money, to_kopecks
 from ozon_mcp.utils.serde import dumps, loads
 
-_PAYMENT_TYPE_RE = re.compile(r"payment_type=(\d+)")
-_POINTS_RE = re.compile(r"points_applied=([\d.]+)")
-_DIGITS_RE = re.compile(r"\d+")
-_TAG_RE = re.compile(r"<[^>]+>")
-_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
-_RECIPIENT_ACTION = "editAddressAndRecipient"
+_PAYMENT_TYPE_RE: Final = re.compile(r"payment_type=(\d+)")
+_POINTS_RE: Final = re.compile(r"points_applied=([\d.]+)")
+_DIGITS_RE: Final = re.compile(r"\d+")
+_TAG_RE: Final = re.compile(r"<[^>]+>")
+_BR_RE: Final = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_RECIPIENT_ACTION: Final = "editAddressAndRecipient"
 # The destination cell is the one drawn with a location pin; the recipient cell
 # looks the same but carries a profile icon.
-_ADDRESS_ICON = "ic_m_location_pin_filled"
-_ADDRESS_BOOK = "miniaddressbook"
+_ADDRESS_ICON: Final = "ic_m_location_pin_filled"
+_ADDRESS_BOOK: Final = "miniaddressbook"
 # How Ozon names instalments among the payment methods it declares.
-_INSTALMENT_KIND = "OzonCredit"
-_SPLIT_KEY_RE = re.compile(r"split_key=([A-Za-z0-9\-]+)")
+_INSTALMENT_KIND: Final = "OzonCredit"
+_SPLIT_KEY_RE: Final = re.compile(r"split_key=([A-Za-z0-9\-]+)")
 
 
 def _text(node: Any) -> str | None:
@@ -148,17 +147,17 @@ def postpay_texts(data: dict[str, Any]) -> dict[str, str]:
     return {}
 
 
-def _scope(label: str | None, texts: dict[str, str]) -> str:
+def _scope(label: str | None, texts: dict[str, str]) -> PostPaymentScope:
     """Whether the offered pay-on-delivery covers the whole order or part of it."""
     rendered = (label or "").strip().casefold()
     if not rendered:
-        return "none"
+        return PostPaymentScope.NONE
     if rendered == (texts.get("mixedPrepayCheckboxText") or "").strip().casefold():
-        return "partial"
+        return PostPaymentScope.PARTIAL
     if rendered == (texts.get("fullPostPayCheckboxText") or "").strip().casefold():
-        return "full"
+        return PostPaymentScope.FULL
     # Unrecognised wording: the prepayment line is the other signal Ozon gives.
-    return "partial" if "часть" in rendered else "full"
+    return PostPaymentScope.PARTIAL if "часть" in rendered else PostPaymentScope.FULL
 
 
 def parse_pay_after_receipt(state: Any, texts: dict[str, str] | None = None) -> PayAfterReceipt:
@@ -549,13 +548,17 @@ def _state_postpay(switch: PayAfterReceipt, totals: Totals) -> None:
     if not switch.available:
         switch.note = "Ozon does not offer pay-on-delivery for this order"
         return
-    part = "only part of this order can be paid on delivery" if switch.scope == "partial" else "the whole order"
+    part = (
+        "only part of this order can be paid on delivery"
+        if switch.scope is PostPaymentScope.PARTIAL
+        else "the whole order"
+    )
     if not switch.enabled:
         # Ozon prints the prepayment line only while the switch is on: with it
         # off nothing is deferred, so today's charge is the whole order.
         switch.note = f"{part}; the switch is off, so all {totals.order_total} is charged now"
         return
-    if switch.scope != "partial":
+    if switch.scope is not PostPaymentScope.PARTIAL:
         switch.post_payment_amount = totals.order_total
         switch.note = f"the whole order ({totals.order_total}) is paid on receipt, nothing is charged now"
         return

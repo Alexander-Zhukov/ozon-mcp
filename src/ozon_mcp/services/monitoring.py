@@ -5,16 +5,14 @@ persist a ``{sku: price}`` snapshot, compare a fresh one against the last, and
 report drops/rises. Scheduling lives outside — this only computes the diff.
 """
 
-from __future__ import annotations
-
 import time
-from typing import Any
+from typing import Any, Final
 
 from ozon_mcp.models.lists import PriceChange, PriceDiff
 from ozon_mcp.settings import get_settings
 from ozon_mcp.utils.serde import dumps, loads
 
-_MAX_SNAPSHOTS = 50
+_MAX_SNAPSHOTS: Final = 50
 
 
 def _load() -> dict[str, Any]:

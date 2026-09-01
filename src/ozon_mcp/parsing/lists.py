@@ -9,11 +9,10 @@ Ozon's «Подборки» are *not* these lists: they live on ``/selections/li
 not created by the same action, and are not covered here.
 """
 
-from __future__ import annotations
-
 import re
-from typing import Any
+from typing import Any, Final
 
+from ozon_mcp.models.enums import ListKind
 from ozon_mcp.models.lists import ListRef
 from ozon_mcp.parsing.common import widgets_all
 from ozon_mcp.utils.serde import dumps
@@ -21,11 +20,11 @@ from ozon_mcp.utils.serde import dumps
 # A card states its size in words — "8 подарков", or "Нет подарков" when empty,
 # so the number is optional and its absence means none. The wording is also what
 # separates a list card from the "create a new one" cell, which has no subtitle.
-_COUNT_RE = re.compile(r"(?:(\d+)\s+)?(товар\w*|подарк\w*|подарок)")
-_LIST_ID_RE = re.compile(r"[?&]list=(\d+)")
+_COUNT_RE: Final = re.compile(r"(?:(\d+)\s+)?(товар\w*|подарк\w*|подарок)")
+_LIST_ID_RE: Final = re.compile(r"[?&]list=(\d+)")
 # A list the product is already in loses its add action and gets a tick instead.
-_MEMBER_ICON = "ic_m_check_filled"
-_ADD_ACTION = "favoriteListAdd"
+_MEMBER_ICON: Final = "ic_m_check_filled"
+_ADD_ACTION: Final = "favoriteListAdd"
 
 
 def _cell_text(block: Any, key: str) -> str | None:
@@ -72,7 +71,7 @@ def parse_wishlists(data: dict[str, Any]) -> list[ListRef]:
         out.append(
             ListRef(
                 name=name,
-                kind="wishlist",
+                kind=ListKind.WISHLIST,
                 items=int(count.group(1)) if count.group(1) else 0,
                 list_id=int(found.group(1)) if found else None,
             )

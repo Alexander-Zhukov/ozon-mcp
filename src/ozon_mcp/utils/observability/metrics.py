@@ -1,3 +1,9 @@
+from typing import Final
+
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
+from starlette.requests import Request
+from starlette.responses import Response
+
 """Prometheus instrumentation, self-contained.
 
 Signals are taken at the transport seam rather than per tool: what actually
@@ -6,15 +12,6 @@ upstream 4xx/5xx), and that all funnels through one request path. Process-level
 metrics come from prometheus_client's default collectors.
 """
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Final
-
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
-from starlette.responses import Response
-
-if TYPE_CHECKING:
-    from starlette.requests import Request
 
 METRICS_PATH: Final = "/metrics"
 

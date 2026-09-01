@@ -6,8 +6,6 @@ choices as ``Literal`` puts them there as an enum, and the descriptions here are
 written for a caller that has no other documentation.
 """
 
-from __future__ import annotations
-
 from typing import Annotated, Literal
 
 from pydantic import Field

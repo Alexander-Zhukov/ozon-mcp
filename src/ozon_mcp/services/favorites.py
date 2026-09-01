@@ -7,15 +7,15 @@ Endpoints captured live:
   ``{"skus": [<int>], "id": <listId>}``.
 """
 
-from __future__ import annotations
-
 import re
-from typing import TYPE_CHECKING
+from typing import Final
 
 from ozon_mcp.dependencies import get_session
 from ozon_mcp.errors import OzonError, WritesDisabledError
+from ozon_mcp.models.catalog import Tile
 from ozon_mcp.models.common import WriteResult
-from ozon_mcp.models.lists import ListRef
+from ozon_mcp.models.enums import ListKind
+from ozon_mcp.models.lists import ListRef, PriceDiff
 from ozon_mcp.parsing import catalog as catalog_parse
 from ozon_mcp.parsing.common import find_all
 from ozon_mcp.parsing.lists import parse_list_membership, parse_wishlists
@@ -24,15 +24,12 @@ from ozon_mcp.settings import get_settings
 
 # Ozon reports neither success nor refusal for these actions, so the honest
 # answer names the read that settles it rather than claiming an outcome.
-_ACCEPTED = "Ozon accepted the change and reports no outcome for it; confirm with {check} if it matters"
-_CREATE_LIST_ACTION = "favoriteCreateList"
-_DELETE_LIST_ACTION = "favoriteDeleteList"
+_ACCEPTED: Final = "Ozon accepted the change and reports no outcome for it; confirm with {check} if it matters"
+_CREATE_LIST_ACTION: Final = "favoriteCreateList"
+_DELETE_LIST_ACTION: Final = "favoriteDeleteList"
 
-if TYPE_CHECKING:
-    from ozon_mcp.models.catalog import Tile
-    from ozon_mcp.models.lists import PriceDiff
 
-_LISTS_PATH = "/my/favorites/lists"
+_LISTS_PATH: Final = "/my/favorites/lists"
 
 
 def _price_number(price: str | None) -> int | None:
@@ -103,7 +100,9 @@ def create_list(name: str) -> ListRef:
     if complaint or not isinstance(response, dict) or not response.get("id"):
         msg = f"Ozon refused to create the list: {complaint or 'no id came back'}"
         raise OzonError(msg)
-    return ListRef(name=str(response.get("title") or name), kind="wishlist", items=0, list_id=int(response["id"]))
+    return ListRef(
+        name=str(response.get("title") or name), kind=ListKind.WISHLIST, items=0, list_id=int(response["id"])
+    )
 
 
 def delete_list(list_id: int) -> WriteResult:

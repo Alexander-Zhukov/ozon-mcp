@@ -1,18 +1,13 @@
 """Dependency-injection factories (no bare module-level singletons)."""
 
-from __future__ import annotations
-
 import asyncio
 import atexit
 import contextlib
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import cache
-from typing import TYPE_CHECKING
 
 from ozon_mcp.session.transport import OzonSession
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 
 @cache

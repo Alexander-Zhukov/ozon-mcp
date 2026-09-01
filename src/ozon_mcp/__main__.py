@@ -6,8 +6,6 @@ same port also serves ``/metrics``, so one published port covers both the
 protocol and scraping.
 """
 
-from __future__ import annotations
-
 import logging
 
 import uvicorn

@@ -1,6 +1,6 @@
 """Cart DTOs."""
 
-from __future__ import annotations
+from pydantic import Field
 
 from ozon_mcp.models.base import OzonModel
 
@@ -28,7 +28,9 @@ class Cart(OzonModel):
     came up short, which is worth knowing before deciding what to order.
     """
 
-    items: list[CartItem] = []
-    item_count: int = 0
-    total_items: int | None = None
-    groups: list[str] = []
+    items: list[CartItem] = Field(default_factory=list, description="The items actually read.")
+    item_count: int = Field(default=0, description="How many were read.")
+    total_items: int | None = Field(
+        default=None, description="How many Ozon says the cart holds; a difference means the read came up short."
+    )
+    groups: list[str] = Field(default_factory=list)

@@ -1,10 +1,9 @@
 """DTOs for the checkout page."""
 
-from __future__ import annotations
-
 from pydantic import Field
 
 from ozon_mcp.models.base import OzonModel
+from ozon_mcp.models.enums import DeliveryMode, PostPaymentScope
 
 
 class PaymentOption(OzonModel):
@@ -50,32 +49,6 @@ class Shipment(OzonModel):
     prepaid: bool | None = None
 
 
-class Delivery(OzonModel):
-    """One destination of the order.
-
-    An order can be split into several shipments, and Ozon may let each one go
-    to its own address — so destinations are a list, and ``split_keys`` says
-    which shipments this one covers.
-    """
-
-    mode: str | None = None
-    address: str | None = None
-    storage: str | None = None
-    recipient: str | None = None
-    split_keys: list[str] = Field(default_factory=list)
-    pickup_points: list[PickupPoint] = Field(default_factory=list)
-    change_link: str | None = None
-
-
-class PointsOption(OzonModel):
-    """A points-spending choice ("Не списывать" / "Списать N")."""
-
-    label: str | None = None
-    amount: int | None = None
-    selected: bool = False
-    apply_link: str | None = None
-
-
 class PickupPoint(OzonModel):
     """A saved delivery address / pickup point offered for this order.
 
@@ -93,6 +66,32 @@ class PickupPoint(OzonModel):
     selected: bool = False
     available: bool = False
     note: str | None = None
+
+
+class Delivery(OzonModel):
+    """One destination of the order.
+
+    An order can be split into several shipments, and Ozon may let each one go
+    to its own address — so destinations are a list, and ``split_keys`` says
+    which shipments this one covers.
+    """
+
+    mode: DeliveryMode | str | None = None
+    address: str | None = None
+    storage: str | None = None
+    recipient: str | None = None
+    split_keys: list[str] = Field(default_factory=list)
+    pickup_points: list[PickupPoint] = Field(default_factory=list)
+    change_link: str | None = None
+
+
+class PointsOption(OzonModel):
+    """A points-spending choice ("Не списывать" / "Списать N")."""
+
+    label: str | None = None
+    amount: int | None = None
+    selected: bool = False
+    apply_link: str | None = None
 
 
 class PayAfterReceipt(OzonModel):
@@ -113,9 +112,9 @@ class PayAfterReceipt(OzonModel):
     only then; with it off the whole order is prepaid by definition.
     """
 
-    available: bool = False
-    enabled: bool = False
-    scope: str = "none"
+    available: bool = Field(default=False, description="Whether Ozon offers pay-on-delivery for this order at all.")
+    enabled: bool = Field(default=False, description="Whether the switch is currently on.")
+    scope: PostPaymentScope = Field(default=PostPaymentScope.NONE, description="How much of the order deferral covers.")
     label: str | None = None
     prepayment: str | None = None
     prepayment_amount: str | None = None
@@ -141,9 +140,9 @@ class Totals(OzonModel):
     """
 
     rows: list[TotalRow] = Field(default_factory=list)
-    total: str | None = None
-    order_total: str | None = None
-    note: str | None = None
+    total: str | None = Field(default=None, description="What Ozon charges today; 0 ₽ on a deferred order.")
+    order_total: str | None = Field(default=None, description="What the order costs — the figure to quote.")
+    note: str | None = Field(default=None, description="Ozon's own line under the totals, if it printed one.")
 
 
 class Checkout(OzonModel):

@@ -7,9 +7,8 @@ available as tools — Ozon sends a one-time code out of band, so it takes two
 calls with a person in between.
 """
 
-from __future__ import annotations
-
 from ozon_mcp.dependencies import get_session
+from ozon_mcp.models.enums import LoginStage
 from ozon_mcp.models.session import LoginStep, SessionStatus
 from ozon_mcp.settings import get_settings
 
@@ -49,7 +48,7 @@ def start_login(login: str) -> LoginStep:
     """Ask Ozon to send a one-time code to ``login`` (email or phone)."""
     channel = get_session().begin_login(login)
     return LoginStep(
-        stage="code_requested",
+        stage=LoginStage.CODE_REQUESTED,
         login=login,
         detail=f"Ozon is sending a code by {channel}; pass it to submit_login_code()",
     )

@@ -1,8 +1,9 @@
 """Collection / wishlist and price-monitoring DTOs."""
 
-from __future__ import annotations
+from pydantic import Field
 
 from ozon_mcp.models.base import OzonModel
+from ozon_mcp.models.enums import ListKind
 
 
 class ListRef(OzonModel):
@@ -17,7 +18,7 @@ class ListRef(OzonModel):
     """
 
     name: str | None = None
-    kind: str | None = None
+    kind: ListKind | None = None
     items: int | None = None
     saves: int | None = None
     list_id: int | None = None
@@ -33,10 +34,10 @@ class PriceChange(OzonModel):
 
 
 class PriceDiff(OzonModel):
-    drops: list[PriceChange] = []
-    rises: list[PriceChange] = []
-    added: list[str] = []
-    removed: list[str] = []
+    drops: list[PriceChange] = Field(default_factory=list)
+    rises: list[PriceChange] = Field(default_factory=list)
+    added: list[str] = Field(default_factory=list)
+    removed: list[str] = Field(default_factory=list)
 
 
 class Selection(OzonModel):

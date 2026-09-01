@@ -1,7 +1,5 @@
 """Parse finance widgets into DTOs."""
 
-from __future__ import annotations
-
 import re
 from typing import Any, Final
 

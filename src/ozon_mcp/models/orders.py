@@ -1,6 +1,6 @@
 """Order DTOs."""
 
-from __future__ import annotations
+from pydantic import Field
 
 from ozon_mcp.models.base import OzonModel
 
@@ -22,18 +22,22 @@ class Order(OzonModel):
     ``order_numbers`` holds them all.
     """
 
-    order_number: str | None = None
-    order_numbers: list[str] = []
+    order_number: str | None = Field(
+        default=None, description='The number every other order tool takes, e.g. "44563249-0877".'
+    )
+    order_numbers: list[str] = Field(
+        default_factory=list, description="Every order in this row; a delivery group carries more than one."
+    )
     pickup: str | None = None
     slot: str | None = None
     delivery_eta: str | None = None
-    status: str | None = None
-    date: str | None = None
-    total: str | None = None
+    status: str | None = Field(default=None, description='Ozon\'s own words: "В пути", "Можно забирать", "Отменён".')
+    date: str | None = Field(default=None, description="Purchase date as YYYY-MM-DD, for completed orders.")
+    total: str | None = Field(default=None, description="What the order cost, as Ozon renders it.")
     items_count: int = 0
-    products: list[OrderThumbnail] = []
+    products: list[OrderThumbnail] = Field(default_factory=list)
     detail_link: str | None = None
-    order_ids: list[int] = []
+    order_ids: list[int] = Field(default_factory=list)
 
 
 class OrderProduct(OzonModel):
@@ -68,5 +72,5 @@ class Return(OzonModel):
     status: str | None = None
     detail: str | None = None
     amount: str | None = None
-    products: list[ReturnProduct] = []
+    products: list[ReturnProduct] = Field(default_factory=list)
     link: str | None = None

@@ -12,25 +12,20 @@ builds the checkout from the selected items, so nothing can be ordered until
 something is ticked.
 """
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any, Final
+from typing import Any, Final
 
 from ozon_mcp.dependencies import get_session
 from ozon_mcp.errors import OzonError, WritesDisabledError
+from ozon_mcp.models.cart import Cart, CartItem
 from ozon_mcp.models.common import WriteResult
 from ozon_mcp.parsing.cart import parse_cart
 from ozon_mcp.parsing.common import declared_count, next_pages
 from ozon_mcp.settings import get_settings
 from ozon_mcp.utils.serde import dumps
 
-if TYPE_CHECKING:
-    from ozon_mcp.models.cart import Cart, CartItem
-
-
 # The header states the cart's real size on this tab.
-_CART_TAB = "Корзина"
-_MAX_CART_PAGES = 30
+_CART_TAB: Final = "Корзина"
+_MAX_CART_PAGES: Final = 30
 
 # Modes Ozon itself sends from the checkboxes; SPECIFIED variants are idempotent
 # (they set a state, they do not toggle).

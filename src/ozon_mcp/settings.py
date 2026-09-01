@@ -2,8 +2,6 @@
 fixed values live in ``constants``.
 """
 
-from __future__ import annotations
-
 from functools import cache
 from pathlib import Path
 from typing import Literal

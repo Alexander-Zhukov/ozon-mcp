@@ -1,6 +1,6 @@
 """Catalog DTOs: search tiles, product cards, reviews, facets."""
 
-from __future__ import annotations
+from pydantic import Field
 
 from ozon_mcp.models.base import OzonModel
 
@@ -29,7 +29,7 @@ class Variant(OzonModel):
     """A product aspect (e.g. Цвет / Размер) and its options."""
 
     name: str
-    options: list[VariantOption] = []
+    options: list[VariantOption] = Field(default_factory=list)
 
 
 class Characteristic(OzonModel):
@@ -42,14 +42,14 @@ class Review(OzonModel):
     score: int | None = None
     text: str | None = None
     date: int | None = None
-    photos: list[str] = []
+    photos: list[str] = Field(default_factory=list)
 
 
 class Reviews(OzonModel):
-    score: list[str] = []
+    score: list[str] = Field(default_factory=list)
     count: int = 0
-    photos: list[str] = []
-    reviews: list[Review] = []
+    photos: list[str] = Field(default_factory=list)
+    reviews: list[Review] = Field(default_factory=list)
 
 
 class ProductCard(OzonModel):
@@ -62,19 +62,19 @@ class ProductCard(OzonModel):
     title: str | None = None
     sku: str | None = None
     price: str | None = None
-    price_list: list[str] = []
-    variants: list[Variant] = []
-    characteristics: list[Characteristic] = []
-    photos: list[str] = []
+    price_list: list[str] = Field(default_factory=list)
+    variants: list[Variant] = Field(default_factory=list)
+    characteristics: list[Characteristic] = Field(default_factory=list)
+    photos: list[str] = Field(default_factory=list)
     description: str | None = None
-    description_images: list[str] = []
+    description_images: list[str] = Field(default_factory=list)
     reviews: Reviews | None = None
 
 
 class Description(OzonModel):
     sku: str
     description: str | None = None
-    images: list[str] = []
+    images: list[str] = Field(default_factory=list)
 
 
 class FilterOption(OzonModel):
@@ -90,13 +90,13 @@ class SearchFilter(OzonModel):
     name: str | None = None
     key: str | None = None
     type: str | None = None
-    options: list[FilterOption] = []
+    options: list[FilterOption] = Field(default_factory=list)
     range: list[int | None] | None = None
 
 
 class Cheaper(OzonModel):
     base: dict[str, str | None]
-    cheaper: list[Tile] = []
+    cheaper: list[Tile] = Field(default_factory=list)
 
 
 class DeliveryEstimate(OzonModel):

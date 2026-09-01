@@ -6,8 +6,6 @@ needed to address the selection. That link is the only place the owner id
 appears, and reading a selection without it answers "она удалена".
 """
 
-from __future__ import annotations
-
 import re
 from typing import Any, Final
 

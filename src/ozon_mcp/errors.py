@@ -1,7 +1,5 @@
 """Domain errors surfaced to MCP callers."""
 
-from __future__ import annotations
-
 
 class OzonError(RuntimeError):
     """Base class for errors this server raises to the caller."""

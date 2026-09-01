@@ -1,8 +1,7 @@
 """Session and login DTOs."""
 
-from __future__ import annotations
-
 from ozon_mcp.models.base import OzonModel
+from ozon_mcp.models.enums import LoginStage
 
 
 class SessionStatus(OzonModel):
@@ -34,6 +33,6 @@ class LoginStep(OzonModel):
     calls with a person in between; ``stage`` says which one is due.
     """
 
-    stage: str
+    stage: LoginStage
     login: str | None = None
     detail: str | None = None
