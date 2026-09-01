@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import json
 import re
 from typing import TYPE_CHECKING
 
@@ -28,6 +27,7 @@ from ozon_mcp.models.catalog import (
 from ozon_mcp.parsing import catalog as parse
 from ozon_mcp.parsing.common import declared_counter, next_pages
 from ozon_mcp.parsing.orders import order_numbers_from_link, parse_order_products
+from ozon_mcp.utils.serde import dumps
 
 if TYPE_CHECKING:
     from ozon_mcp.models.orders import OrderProduct
@@ -104,6 +104,10 @@ def product_details(
     """
     sku = _sku(sku_or_url)
     card = parse.parse_product(get_session().fetch(f"/product/{sku}/"))
+    # The card is asked for by sku, so that is the sku it has — the page does not
+    # always repeat it, and answering None for what the caller just passed in is
+    # no help to anyone.
+    card.sku = card.sku or sku
     if with_description:
         described = get_description(sku)
         card.description = described.description
@@ -141,9 +145,7 @@ def delivery_estimate(sku_or_url: str) -> DeliveryEstimate:
     answering we read the rendered page instead rather than returning nothing.
     """
     sku = _sku(sku_or_url)
-    async_data = base64.b64encode(
-        json.dumps({"ci": WEB_DELIVERY_CI, "url": f"/product/{sku}/"}, ensure_ascii=False).encode()
-    ).decode()
+    async_data = base64.b64encode(dumps({"ci": WEB_DELIVERY_CI, "url": f"/product/{sku}/"}).encode()).decode()
     state = get_session().widget_state(WEB_DELIVERY_STATE_ID, async_data).get("state")
     if state:
         return DeliveryEstimate(sku=sku, **parse.parse_delivery_widget(state))

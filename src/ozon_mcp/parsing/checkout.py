@@ -9,7 +9,6 @@ per-shipment dates; ``total`` the money rows plus the create-order action;
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
@@ -27,6 +26,7 @@ from ozon_mcp.models.checkout import (
 )
 from ozon_mcp.parsing.common import PRICE_RE, find_all, layout_widgets, walk, widget, widgets_all
 from ozon_mcp.utils.money import KOPECKS, format_money, to_kopecks
+from ozon_mcp.utils.serde import dumps, loads
 
 _PAYMENT_TYPE_RE = re.compile(r"payment_type=(\d+)")
 _POINTS_RE = re.compile(r"points_applied=([\d.]+)")
@@ -139,7 +139,7 @@ def postpay_texts(data: dict[str, Any]) -> dict[str, str]:
         if entry.get("component") != "paymentInfoV2":
             continue
         try:
-            params = json.loads(entry.get("params") or "{}")
+            params = loads(entry.get("params") or "{}")
         except (ValueError, TypeError):
             continue
         if not isinstance(params, dict):
@@ -273,7 +273,7 @@ def _address_cell(state: Any) -> dict[str, Any]:
     are told apart by their icons rather than by what their text looks like.
     """
     for node in walk(state):
-        icon = json.dumps(node.get("leftBlock") or {}, ensure_ascii=False)
+        icon = dumps(node.get("leftBlock") or {})
         if _ADDRESS_ICON in icon and isinstance(node.get("centerBlock"), dict):
             return node
     return {}

@@ -8,6 +8,7 @@ authors = [{ name = "Alexander Zhukov" }]
 requires-python = ">=3.13"
 dependencies = [
     "mcp>=1.2,<2",
+    "orjson>=3.10",
     "playwright>=1.40",
     "curl-cffi>=0.7",
     "pydantic>=2.7",
@@ -27,7 +28,7 @@ build-backend = "hatchling.build"
 packages = ["src/ozon_mcp"]
 
 [dependency-groups]
-dev = ["ruff>=0.6", "ty>=0.0.1a1", "pytest>=8", "pytest-asyncio>=0.23"]
+dev = ["ruff>=0.6", "ty>=0.0.1a1", "pytest>=8", "pytest-asyncio>=0.23", "pytest-cov>=5"]
 
 [tool.uv]
 # ty (Astral's type checker) only ships pre-release builds for now.
@@ -62,7 +63,11 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # SLF001: tests exercise internal helpers on purpose.
-"tests/**" = ["S101", "INP001", "SLF001", "PLC2701"]
+# PLR6301: test doubles override methods that do not need self.
+# ARG001: a fixture is requested by naming it, whether or not the body uses it.
+# ARG002: the session stand-in mirrors the real signatures, unused arguments included.
+# PLR6301: test doubles override methods that do not need self.
+"tests/**" = ["S101", "INP001", "SLF001", "PLC2701", "PLR6301", "ARG001", "ARG002", "PT022"]
 # TC*: FastMCP evaluates tool annotations at runtime, so model imports must stay
 # out of a TYPE_CHECKING block. FBT*: MCP tools receive flat JSON arguments, so a
 # boolean parameter cannot be made keyword-only.
@@ -74,9 +79,10 @@ ignore = [
 # Binding all interfaces is the point: the container's port mapping decides what
 # is actually reachable.
 "src/ozon_mcp/settings.py" = ["S104"]
-# The transport retries any upstream failure once with a fresh session, so the
-# specific exception type carries no decision.
-"src/ozon_mcp/session/transport.py" = ["BLE001"]
+# BLE001: any upstream failure is retried the same way, so the exception type
+# carries no decision. PLR6301: _sleep_before_retry is the seam the transport
+# tests replace, so it stays an instance method.
+"src/ozon_mcp/session/transport.py" = ["BLE001", "PLR6301"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
@@ -99,3 +105,18 @@ include = ["src"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["tests"]
+addopts = "--cov=src/ozon_mcp --cov-branch --cov-report=term-missing:skip-covered --cov-fail-under=67"
+
+[tool.coverage.run]
+branch = true
+source = ["src/ozon_mcp"]
+
+[tool.coverage.report]
+# Lines that only run with a real browser or a real process exit are not worth
+# faking; everything reachable from a scripted session is.
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "def __repr__",
+]

@@ -14,7 +14,6 @@ something is ticked.
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any, Final
 
 from ozon_mcp.dependencies import get_session
@@ -23,6 +22,7 @@ from ozon_mcp.models.common import WriteResult
 from ozon_mcp.parsing.cart import parse_cart
 from ozon_mcp.parsing.common import declared_count, next_pages
 from ozon_mcp.settings import get_settings
+from ozon_mcp.utils.serde import dumps
 
 if TYPE_CHECKING:
     from ozon_mcp.models.cart import Cart, CartItem
@@ -111,7 +111,7 @@ def _send_selection(mode: str, skus: list[str] | None = None) -> None:
     params: dict[str, Any] = {"mode": mode}
     if skus is not None:
         params["items"] = [str(sku) for sku in skus]
-    body = {"name": "selectItems", "params": json.dumps(params, ensure_ascii=False)}
+    body = {"name": "selectItems", "params": dumps(params)}
     get_session().post_page("/cart", body)
 
 

@@ -7,19 +7,19 @@ report drops/rises. Scheduling lives outside — this only computes the diff.
 
 from __future__ import annotations
 
-import json
 import time
 from typing import Any
 
 from ozon_mcp.models.lists import PriceChange, PriceDiff
 from ozon_mcp.settings import get_settings
+from ozon_mcp.utils.serde import dumps, loads
 
 _MAX_SNAPSHOTS = 50
 
 
 def _load() -> dict[str, Any]:
     try:
-        return json.loads(get_settings().monitor_store.read_text(encoding="utf-8"))
+        return loads(get_settings().monitor_store.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {"snapshots": [], "titles": {}}
 
@@ -27,7 +27,7 @@ def _load() -> dict[str, Any]:
 def _save(history: dict[str, Any]) -> None:
     store = get_settings().monitor_store
     store.parent.mkdir(parents=True, exist_ok=True)
-    store.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+    store.write_text(dumps(history, indent=True), encoding="utf-8")
 
 
 def diff(old: dict[str, int], new: dict[str, int], titles: dict[str, str]) -> PriceDiff:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Final
@@ -15,6 +14,7 @@ from ozon_mcp.parsing.orders import order_numbers_from_link, parse_orders
 from ozon_mcp.parsing.returns import parse_returns
 from ozon_mcp.settings import get_settings
 from ozon_mcp.utils.money import format_money, to_kopecks
+from ozon_mcp.utils.serde import dumps, loads
 
 if TYPE_CHECKING:
     from ozon_mcp.models.orders import Order, Return
@@ -49,9 +49,7 @@ def _archive_pages(limit: int, stop_before: str | None = None) -> list[Order]:
             page_dates = [o.date for o in page if o.date]
             if page_dates and max(page_dates) < stop_before:
                 break
-        match = re.search(
-            r"/my/orderlist\?[^\"\\ ]*archiveOrdersStart=\d+[^\"\\ ]*", json.dumps(data, ensure_ascii=False)
-        )
+        match = re.search(r"/my/orderlist\?[^\"\\ ]*archiveOrdersStart=\d+[^\"\\ ]*", dumps(data))
         if not match:
             break
         following = match.group(0).replace("\\u0026", "&").replace("\\/", "/")
@@ -205,7 +203,7 @@ def _reasons_modal(order: str, skus: list[str] | None = None) -> tuple[str, dict
     if _REASONS_MODAL in entry:
         state = widget(session.fetch(entry, backend="entrypoint"), "selectCancelReason") or {}
         try:
-            carried = json.loads(state.get("state") or "{}")
+            carried = loads(state.get("state") or "{}")
         except (ValueError, TypeError):
             carried = {}
         params = carried.get("Parameters")
@@ -376,7 +374,7 @@ def cancel_order(
     state = {"IsCheckboxChecked": return_to_cart, "Parameters": _typed(params), "Comment": comment}
     chosen = session.post_page(
         link,
-        {"ReasonId": reason_id, "state": json.dumps(state, ensure_ascii=False)},
+        {"ReasonId": reason_id, "state": dumps(state)},
         backend="entrypoint",
     )
 

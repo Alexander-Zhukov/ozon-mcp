@@ -11,12 +11,12 @@ not created by the same action, and are not covered here.
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
 from ozon_mcp.models.lists import ListRef
 from ozon_mcp.parsing.common import widgets_all
+from ozon_mcp.utils.serde import dumps
 
 # A card states its size in words — "8 подарков", or "Нет подарков" when empty,
 # so the number is optional and its absence means none. The wording is also what
@@ -94,8 +94,8 @@ def parse_list_membership(data: dict[str, Any]) -> dict[str, bool]:
         name = _cell_text(center, "title")
         if not name:
             continue
-        right = json.dumps(body.get("rightBlock") or {}, ensure_ascii=False)
-        action = json.dumps((body.get("common") or {}).get("action") or {}, ensure_ascii=False)
+        right = dumps(body.get("rightBlock") or {})
+        action = dumps((body.get("common") or {}).get("action") or {})
         if _MEMBER_ICON in right:
             membership[name] = True
         elif _ADD_ACTION in action:

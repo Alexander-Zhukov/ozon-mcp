@@ -20,9 +20,9 @@ then flushes them to disk, and the refresh chain survives a restart.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
+import secrets
 import shutil
 import threading
 import time
@@ -42,9 +42,10 @@ from ozon_mcp.constants import (
     LAUNCH_ARGS,
     WIDGET_URL,
 )
-from ozon_mcp.errors import OzonError, SessionExpiredError
+from ozon_mcp.errors import OzonError, RateLimitedError, SessionExpiredError, UpstreamError
 from ozon_mcp.settings import get_settings
 from ozon_mcp.utils.observability import BROWSER_ACTIVE, SESSION_BOOTSTRAPS, UPSTREAM_LATENCY, UPSTREAM_REQUESTS
+from ozon_mcp.utils.serde import dumps, loads
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -64,6 +65,11 @@ Backend = str  # "composer" | "entrypoint" | "action"
 
 # OZON hands out tokens shaped "<ver>.<userId>.<secret>"; userId 0 means guest.
 _GUEST_USER_ID: Final = "0"
+_TOO_MANY_REQUESTS: Final = 429
+_CLIENT_ERROR: Final = 400
+_SERVER_ERROR: Final = 500
+# Enough of a failing body to recognise it in a log or an error, no more.
+_EXCERPT_CHARS: Final = 200
 # Ozon serves each login step from its own "-lite" iframe: the email or phone
 # form from /ozonid-lite, the one-time code from /otp-lite.
 _AUTH_FRAME_MARKERS: Final[tuple[str, ...]] = ("ozonid", "otp-lite")
@@ -121,7 +127,7 @@ class OzonSession:
             self._seed_from_state()
         self._page = self._context.pages[0] if self._context.pages else self._context.new_page()
         BROWSER_ACTIVE.set(1)
-        self._page.goto(HOME_URL, wait_until="domcontentloaded", timeout=90_000)
+        self._page.goto(HOME_URL, wait_until="domcontentloaded", timeout=self._browser_ms(1.5))
         self._page.wait_for_timeout(12_000)  # let Variti set cookies
         if _ANTIBOT.search((self._page.title() or "").lower()):
             self._close_browser()
@@ -186,7 +192,7 @@ class OzonSession:
         restore OzonID, so checkout still needs one interactive sign-in.
         """
         try:
-            saved = json.loads(self._seed_state.read_text(encoding="utf-8"))
+            saved = loads(self._seed_state.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             logger.info("no session to seed at %s; interactive login required", self._seed_state)
             return
@@ -308,11 +314,59 @@ class OzonSession:
     def _blocked(status: int, text: str) -> bool:
         return status in {403, 307} or "incidentId" in text or "abt-challenge" in text
 
+    @staticmethod
+    def _browser_ms(share: float = 1.0) -> int:
+        """A Playwright timeout in milliseconds, from the configured budget.
+
+        Playwright counts in milliseconds and the setting is in seconds; the
+        share scales one wait against the others, so tuning one number moves
+        them all together instead of leaving eight literals to chase.
+        """
+        return int(get_settings().browser_timeout * share * 1000)
+
+    def _sleep_before_retry(self, attempt: int, retry_after: float | None) -> None:
+        """Wait before the next attempt: what Ozon asked for, or a backoff.
+
+        The wait is capped and jittered — capped because a Retry-After of an
+        hour must not hang a tool call, jittered because several calls that
+        failed together would otherwise come back in lockstep.
+        """
+        settings = get_settings()
+        base = retry_after if retry_after is not None else settings.retry_backoff_seconds * (2 ** (attempt - 1))
+        delay = min(base, settings.retry_cap_seconds)
+        # secrets, not random: the module is used for nothing else here, and one
+        # source of randomness is one less thing to get wrong.
+        time.sleep(delay * (0.5 + secrets.randbelow(500) / 1000))
+
+    @staticmethod
+    def _retry_after(response: Any) -> float | None:
+        """The wait Ozon asked for, if it asked in seconds."""
+        header = ""
+        with suppress(Exception):
+            header = str((response.headers or {}).get("Retry-After") or "")
+        try:
+            return float(header.strip())
+        except ValueError:
+            return None
+
     def _request(self, method: str, url: str, body: object = None, backend: Backend = "composer") -> dict[str, Any]:
+        """One call to Ozon, retried, and never answered with an empty page.
+
+        A failure used to come back as ``{"widgetStates": {}}``, which every
+        parser turns into an empty list — so a 502, a timeout or a rate limit
+        read exactly like an account with no orders. Anything that is not a page
+        now raises instead.
+
+        A 4xx carrying JSON is passed through on purpose: Ozon reports refused
+        actions that way ("Пустое название вишлиста"), and the caller needs the
+        reason, not an exception.
+        """
+        settings = get_settings()
+        attempts = max(1, settings.request_attempts)
         with self._lock:
-            status, text = 0, ""
+            status, text, retry_after = 0, "", None
             started = time.monotonic()
-            for attempt in (1, 2):
+            for attempt in range(1, attempts + 1):
                 self._ensure_http()
                 headers = dict(self._headers)
                 headers["accept"] = "application/json"
@@ -320,29 +374,58 @@ class OzonSession:
                     headers["content-type"] = "application/json"
                 try:
                     response = self._http.request(
-                        method, url, headers=headers, timeout=30, data=json.dumps(body) if body is not None else None
+                        method,
+                        url,
+                        headers=headers,
+                        timeout=settings.request_timeout,
+                        data=dumps(body) if body is not None else None,
                     )
                     status, text = response.status_code, response.text
-                # Any transport failure is retried once with a freshly bootstrapped session.
+                    retry_after = self._retry_after(response) if status == _TOO_MANY_REQUESTS else None
+                # A transport failure carries no status; it is retried like a 5xx.
                 except Exception:
-                    status, text = 0, ""
-                if (self._blocked(status, text) or status == 0) and attempt == 1:
+                    status, text, retry_after = 0, "", None
+                    logger.debug("upstream transport error on %s", url, exc_info=True)
+
+                if self._blocked(status, text):
                     UPSTREAM_REQUESTS.labels(backend=backend, outcome="rechallenge").inc()
-                    self._rebootstrap()
-                    continue
-                UPSTREAM_LATENCY.labels(backend=backend).observe(time.monotonic() - started)
-                UPSTREAM_REQUESTS.labels(backend=backend, outcome=_outcome(status)).inc()
-                self._last_used = time.time()
-                self.save_state()
-                try:
-                    data = json.loads(text)
-                except ValueError:
-                    data = {}
-                data.setdefault("_httpStatus", status)
-                return data
+                    if attempt < attempts:
+                        self._rebootstrap()
+                        continue
+                elif status == _TOO_MANY_REQUESTS or status >= _SERVER_ERROR or status == 0:
+                    UPSTREAM_REQUESTS.labels(backend=backend, outcome=_outcome(status)).inc()
+                    if attempt < attempts:
+                        self._sleep_before_retry(attempt, retry_after)
+                        continue
+                else:
+                    return self._page_from(text, status, backend, started)
             UPSTREAM_LATENCY.labels(backend=backend).observe(time.monotonic() - started)
             UPSTREAM_REQUESTS.labels(backend=backend, outcome="failed").inc()
-            return {"_httpStatus": status, "widgetStates": {}}
+            if status == _TOO_MANY_REQUESTS:
+                raise RateLimitedError(retry_after)
+            raise UpstreamError(status, _excerpt(text))
+
+    def _page_from(self, text: str, status: int, backend: Backend, started: float) -> dict[str, Any]:
+        """Turn a served response into a page, or refuse to call it one.
+
+        A 4xx that is not JSON carries nothing a caller can act on — an HTML 404
+        would arrive as an empty page and read as an empty account — so it is
+        raised rather than returned.
+        """
+        UPSTREAM_LATENCY.labels(backend=backend).observe(time.monotonic() - started)
+        UPSTREAM_REQUESTS.labels(backend=backend, outcome=_outcome(status)).inc()
+        self._last_used = time.time()
+        self.save_state()
+        try:
+            data = loads(text)
+        except ValueError:
+            data = None
+        if not isinstance(data, dict):
+            if status >= _CLIENT_ERROR:
+                raise UpstreamError(status, _excerpt(text))
+            data = {}
+        data.setdefault("_httpStatus", status)
+        return data
 
     def fetch(self, path: str, backend: Backend = "composer") -> dict[str, Any]:
         """Fetch a page's JSON by on-site path. backend: composer | entrypoint."""
@@ -394,7 +477,7 @@ class OzonSession:
         with self._lock:
             self._ensure_browser()
             url = HOME_URL.rstrip("/") + path if path.startswith("/") else path
-            self._page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+            self._page.goto(url, wait_until="domcontentloaded", timeout=self._browser_ms())
             self._page.wait_for_timeout(6_000)
             if scroll:  # trigger lazy widgets
                 for delta in (4000, 9000, 16000):
@@ -431,20 +514,20 @@ class OzonSession:
             self._logging_in = True
             self._close_browser()
             self._launch_browser()
-            self._page.goto(HOME_URL + "my/orderlist", wait_until="domcontentloaded", timeout=60_000)
+            self._page.goto(HOME_URL + "my/orderlist", wait_until="domcontentloaded", timeout=self._browser_ms())
             self._page.wait_for_timeout(6_000)
-            self._page.get_by_role("button", name="войти", exact=False).first.click(timeout=15_000)
+            self._page.get_by_role("button", name="войти", exact=False).first.click(timeout=self._browser_ms(0.25))
             frame = self._auth_frame()
             self._page.wait_for_timeout(2_500)
             by_mail = "@" in login
             if by_mail:
-                frame.get_by_text("Войти по почте", exact=False).first.click(timeout=8_000)
+                frame.get_by_text("Войти по почте", exact=False).first.click(timeout=self._browser_ms(0.15))
                 self._page.wait_for_timeout(2_500)
                 frame = self._auth_frame()
                 frame.locator("input[type=email]").first.fill(login)
             else:
                 frame.locator("input").first.fill(login)
-            frame.get_by_role("button", name="Войти", exact=True).first.click(timeout=8_000)
+            frame.get_by_role("button", name="Войти", exact=True).first.click(timeout=self._browser_ms(0.15))
             self._page.wait_for_timeout(5_000)
             return "email" if by_mail else "phone"
 
@@ -465,13 +548,13 @@ class OzonSession:
             self._page.wait_for_timeout(1_500)
             with suppress(Exception):
                 button = frame.get_by_role("button", name="Войти", exact=True).first
-                if button.is_enabled(timeout=1_500):
-                    button.click(timeout=2_500)
+                if button.is_enabled(timeout=self._browser_ms(0.03)):
+                    button.click(timeout=self._browser_ms(0.05))
             for _ in range(20):
                 self._page.wait_for_timeout(1_000)
                 if not any(_is_auth_frame(frame.url or "") for frame in self._page.frames):
                     break
-            self._page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
+            self._page.goto(HOME_URL, wait_until="domcontentloaded", timeout=self._browser_ms())
             self._page.wait_for_timeout(4_000)
             signed_in = self._browser_is_signed_in()
             if signed_in:
@@ -504,3 +587,8 @@ class OzonSession:
         """
         blob = str(data.get("widgetStates") or {})
         return any(marker in blob for marker in ("myOrdersList", "orderList", "profileMenuUser", "userAdultModal"))
+
+
+def _excerpt(text: str) -> str:
+    """A slice of a failing response, with the whitespace collapsed."""
+    return " ".join((text or "").split())[:_EXCERPT_CHARS]
