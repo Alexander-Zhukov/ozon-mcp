@@ -9,7 +9,7 @@ import re
 from typing import Any, Final
 
 from ozon_mcp.models.orders import Order, OrderProduct, OrderThumbnail
-from ozon_mcp.parsing.common import find_all, prices, widget, widgets_all
+from ozon_mcp.parsing.common import find_all, prices, walk, widget, widgets_all
 
 _RU_MONTHS: Final = {
     "январ": 1,
@@ -43,6 +43,29 @@ def order_ids_from_link(link: str | None) -> list[int]:
         return []
 
 
+def order_numbers_from_link(link: str | None) -> list[str]:
+    """Order numbers behind an order row.
+
+    The row's ``detail_link`` is a cacheOrderProducts blob listing *postings*
+    ("44563249-0833-6"); the order page is keyed by the number without the
+    trailing parcel segment.
+    """
+    match = re.search(r"data=([A-Za-z0-9_\-=]+)", link or "")
+    if not match:
+        return []
+    try:
+        token = match.group(1) + "=" * (-len(match.group(1)) % 4)
+        postings = json.loads(base64.urlsafe_b64decode(token)).get("postings", [])
+    except (ValueError, TypeError):
+        return []
+    numbers: list[str] = []
+    for posting in postings:
+        number = "-".join(str(posting).split("-")[:2])
+        if number and number not in numbers:
+            numbers.append(number)
+    return numbers
+
+
 def parse_ru_date(text: object) -> str | None:
     """Parse «Получен 24 августа [2025]» → ISO ``YYYY-MM-DD``. Year defaults to
     the current one; a future result rolls back a year.
@@ -65,6 +88,27 @@ def parse_ru_date(text: object) -> str | None:
     return parsed.isoformat()
 
 
+_ORDER_PARAM_RE = re.compile(r"[?&]order=(\d{6,}-\d{3,})")
+
+
+def order_numbers_in(row: Any) -> list[str]:
+    """Order numbers a listed row is about.
+
+    A row is a delivery group, not an order: its own link bundles the postings of
+    every order arriving together, so decoding that link gives the whole bundle
+    and pins nothing to this row. Each product on the row, though, links to its
+    own order — ``/my/orderdetails/?order=44563249-0833`` — which is where the
+    number for *this* row is.
+    """
+    found: list[str] = []
+    for node in walk(row):
+        link = node.get("link")
+        match = _ORDER_PARAM_RE.search(link) if isinstance(link, str) else None
+        if match and match.group(1) not in found:
+            found.append(match.group(1))
+    return found
+
+
 def parse_orders(data: dict[str, Any]) -> list[Order]:
     """Orders from the ordersV2 widget (active list or archive)."""
     state = widget(data, "orderList")
@@ -74,6 +118,7 @@ def parse_orders(data: dict[str, Any]) -> list[Order]:
         left = row.get("leftBlock") or {}
         products = ((row.get("rightBlock") or {}).get("products") or {}).get("products") or []
         action = (row.get("common") or {}).get("action") or {}
+        numbers = order_numbers_in(row)
         status_texts = [
             t.get("text") for t in find_all(left.get("textIcon") or {}, "text") if isinstance(t, dict) and t.get("text")
         ]
@@ -99,32 +144,11 @@ def parse_orders(data: dict[str, Any]) -> list[Order]:
                 products=thumbnails,
                 detail_link=action.get("link"),
                 order_ids=order_ids_from_link(action.get("link")),
+                order_number=next(iter(numbers), None),
+                order_numbers=numbers,
             )
         )
     return orders
-
-
-def order_numbers_from_link(link: str | None) -> list[str]:
-    """Order numbers behind an order row.
-
-    The row's ``detail_link`` is a cacheOrderProducts blob listing *postings*
-    ("44563249-0833-6"); the order page is keyed by the number without the
-    trailing parcel segment.
-    """
-    match = re.search(r"data=([A-Za-z0-9_\-=]+)", link or "")
-    if not match:
-        return []
-    try:
-        token = match.group(1) + "=" * (-len(match.group(1)) % 4)
-        postings = json.loads(base64.urlsafe_b64decode(token)).get("postings", [])
-    except (ValueError, TypeError):
-        return []
-    numbers: list[str] = []
-    for posting in postings:
-        number = "-".join(str(posting).split("-")[:2])
-        if number and number not in numbers:
-            numbers.append(number)
-    return numbers
 
 
 _PRODUCT_LINK_RE = re.compile(r"/product/(?:[a-z0-9\-]+-)?(\d{6,})")

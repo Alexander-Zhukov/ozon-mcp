@@ -22,7 +22,12 @@ Sku = Annotated[
 ]
 OrderRef = Annotated[
     str,
-    Field(description='An order number ("44563249-0877") or a detail_link from list_orders().'),
+    Field(
+        description=(
+            'An order number ("44563249-0877") — the order_number field of a list_orders() entry. '
+            "Its detail_link is accepted too, since the number is encoded in it."
+        )
+    ),
 ]
 Limit = Annotated[int, Field(ge=1, le=1000, description="How many entries to return at most.")]
 Page = Annotated[int, Field(ge=1, description="1-based page number.")]
