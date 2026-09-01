@@ -103,7 +103,8 @@ class PayAfterReceipt(OzonModel):
     case this is:
 
     - ``full`` — the whole order can be paid on delivery
-    - ``partial`` — only part of it; ``prepayment_amount`` is charged now
+    - ``partial`` — only part of it; ``prepayment_amount`` is charged now, and
+      the two item lists say exactly which lines fall on which side
     - ``none`` — Ozon does not offer pay-on-delivery for this order at all
 
     The amounts are what is charged when the switch is on, so they are stated
@@ -117,6 +118,8 @@ class PayAfterReceipt(OzonModel):
     prepayment: str | None = None
     prepayment_amount: str | None = None
     post_payment_amount: str | None = None
+    pay_now_items: list[ShipmentItem] = Field(default_factory=list)
+    pay_on_receipt_items: list[ShipmentItem] = Field(default_factory=list)
     note: str | None = None
     toggle_link: str | None = None
 

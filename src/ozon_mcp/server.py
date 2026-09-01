@@ -242,11 +242,11 @@ async def get_checkout(shipment_items: bool | None = None) -> Checkout:
     Pay-on-delivery does not always cover the whole order. pay_after_receipt
     .scope is one of "full", "partial" (some items must be paid up front:
     prepayment_amount now, post_payment_amount on receipt) or "none", and .note
-    states it in words. On a partial order the `shipments` are loaded with their
-    items, and each shipment's `prepaid` says whether it is the part that has to
-    be paid now — null means Ozon did not say and the amounts do not settle it.
-    shipment_items forces that loading on (true) or off (false); by default it
-    happens only when scope is "partial".
+    states it in words. On a partial order pay_now_items and pay_on_receipt_items
+    name the lines on each side, as Ozon itself splits them, and the `shipments`
+    are loaded with their items, each carrying `prepaid` (null when it holds
+    items from both sides). shipment_items forces that loading on (true) or off
+    (false); by default it happens only when scope is "partial".
 
     Forms the checkout itself if Ozon has not yet. If it reports
     available=false, `reason` says what to fix — usually: select cart items.
