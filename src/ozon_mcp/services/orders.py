@@ -11,7 +11,7 @@ from ozon_mcp.dependencies import get_session
 from ozon_mcp.errors import OzonError, WritesDisabledError
 from ozon_mcp.models.checkout import CancelReason, OrderCancelled, PaymentRequested
 from ozon_mcp.parsing.common import find_all, walk, widget
-from ozon_mcp.parsing.orders import parse_orders
+from ozon_mcp.parsing.orders import order_numbers_from_link, parse_orders
 from ozon_mcp.settings import get_settings
 from ozon_mcp.utils.money import format_money, to_kopecks
 
@@ -89,6 +89,7 @@ def orders_by_date(date_from: str, date_to: str, max_orders: int = 300) -> list[
 # parameters. Rather than rebuilding those parameters (they include ids only the
 # server knows, like OrderId), every step follows the action the previous
 # response carried — which is what the site itself does.
+_ORDER_NUMBER_RE: Final = re.compile(r"\d{6,}-\d{3,}")
 _CANCEL_MODAL_ACTION: Final = "selectCancelModalRms"
 _CANCEL_ORDER_ACTION: Final = "v2/cancelOrderRms"
 _MODAL_CONSTRUCTOR_ACTION: Final = "v2/openModalConstructorRms"
@@ -227,8 +228,41 @@ def _reasons_modal(order: str, skus: list[str] | None = None) -> tuple[str, dict
     return str(link), dict(action.get("params") or {})
 
 
+def _order_exists(page: dict[str, Any]) -> bool:
+    """Whether an order page is an order at all.
+
+    Ozon answers a number it does not know with a perfectly valid page that has
+    no order on it, so asking to pay one used to come back as "nothing left to
+    pay" — indistinguishable from a settled order. The shipment block is what
+    only a real order has.
+    """
+    return any(widget(page, name) for name in ("shipmentWidget", "orderDoneTotal", "orderDetailsHeader"))
+
+
+def resolve_order(order: str) -> str:
+    """The order number behind whatever the caller passed.
+
+    ``list_orders`` hands out a ``detail_link``, and it is the natural thing to
+    pass on — but only the products tool ever accepted one, so cancelling or
+    paying from a listed order failed on the id it was just given. The number is
+    encoded in that link, so it is decoded here instead of being demanded.
+    """
+    text = str(order).strip()
+    if _ORDER_NUMBER_RE.fullmatch(text):
+        return text
+    number = next(iter(order_numbers_from_link(text)), None)
+    if number:
+        return number
+    msg = (
+        f"{order!r} is neither an order number nor a link that carries one; "
+        "pass order_number or detail_link from list_orders()"
+    )
+    raise OzonError(msg)
+
+
 def list_cancel_reasons(order: str) -> list[CancelReason]:
     """Reasons Ozon will accept for cancelling this order."""
+    order = resolve_order(order)
     link, _ = _reasons_modal(order)
     state = widget(get_session().fetch(link, backend="entrypoint"), "selectCancelReason") or {}
     reasons: list[CancelReason] = []
@@ -300,6 +334,7 @@ def cancel_order(
     address instead), and only then confirm.
     """
     _require_writes()
+    order = resolve_order(order)
     if reason_id == _NEEDS_COMMENT_REASON and not comment.strip():
         msg = f"reason {reason_id} requires a comment"
         raise OzonError(msg)
@@ -382,8 +417,12 @@ def pay_order(order: str) -> PaymentRequested:
     remains: top up by ``shortfall`` if set, then complete at ``payment_url``.
     """
     _require_writes()
+    order = resolve_order(order)
     session = get_session()
     page = session.fetch(f"/my/orderdetails/?order={order}")
+    if not _order_exists(page):
+        msg = f"there is no order {order} on this account — check the number against list_orders()"
+        raise OzonError(msg)
     starter = _follow_action(page, _PAY_ACTION)
     params = (starter or {}).get("params") or {}
     amount = _money(params.get("totalPrice") or params.get("finalPrepayPrice"))

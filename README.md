@@ -29,7 +29,7 @@ a persistent browser profile seeded by one interactive login.
 
 | Tool | Description |
 |---|---|
-| `list_orders` | Orders (active / archive / all), optionally within an ISO date range |
+| `list_orders` | Orders (active / archive / all), with their order_number, optionally within an ISO date range |
 | `order_products` | Items of one order: sku, title, price paid, variant, seller |
 | `purchases` | Purchase history — all of it, or a fast server-side search |
 | `list_returns` | Buyer returns with their status |

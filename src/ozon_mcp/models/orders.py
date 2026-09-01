@@ -13,6 +13,17 @@ class OrderThumbnail(OzonModel):
 
 
 class Order(OzonModel):
+    """One order as the order list shows it.
+
+    ``order_number`` is what every other order tool takes — cancelling, paying,
+    listing reasons. Ozon does not print it on the row: it is encoded in the
+    row's link, so it is decoded here rather than left for the caller to dig
+    out. An order split across parcels has one number per parcel, and
+    ``order_numbers`` holds them all.
+    """
+
+    order_number: str | None = None
+    order_numbers: list[str] = []
     pickup: str | None = None
     slot: str | None = None
     delivery_eta: str | None = None
