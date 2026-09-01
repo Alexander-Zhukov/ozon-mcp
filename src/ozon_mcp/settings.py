@@ -20,6 +20,9 @@ class OzonSettings(BaseSettings):
     """Persistent Chromium profile holding the session, including OzonID state
     that a storageState snapshot cannot carry (IndexedDB, device trust)."""
 
+    profile_backup: Path = Path("/data/profile.backup")
+    """Copy of a known-good profile, restored if the live one gets logged out."""
+
     state_path: Path = Path("/data/state.json")
     """Legacy storageState, imported once to seed a brand-new profile."""
 

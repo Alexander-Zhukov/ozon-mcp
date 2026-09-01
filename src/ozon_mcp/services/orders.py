@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from ozon_mcp.dependencies import get_session
 from ozon_mcp.errors import OzonError, WritesDisabledError
-from ozon_mcp.models.checkout import CancelReason, OrderCancelled
+from ozon_mcp.models.checkout import CancelReason, OrderCancelled, PaymentRequested
 from ozon_mcp.parsing.common import find_all, walk, widget
 from ozon_mcp.parsing.orders import parse_orders
 from ozon_mcp.settings import get_settings
@@ -265,3 +265,52 @@ def cancel_order(
         returned_to_cart=return_to_cart and ok,
         detail=None if ok else f"Ozon replied {result.get('_httpStatus')}",
     )
+
+
+# --- paying an order that was left unpaid --------------------------------
+_PAY_ACTION: Final = "v2/changePaymentMethodAndPay"
+_CREATE_PAYMENT_ACTION: Final = "v2/createPayment"
+_BANK_HOST: Final = "finance.ozon.ru"
+
+
+def pay_order(order: str) -> PaymentRequested:
+    """Ask Ozon to charge an order that is still awaiting payment.
+
+    ``v2/createPayment`` is asked directly rather than hunted for on the order
+    page: the page grows its pay button only some time after the order appears,
+    so a freshly placed order would read as "nothing to pay". The page's own
+    action is still tried as a fallback, since it carries the payment method and
+    amount when Ozon wants them stated.
+
+    The charge itself finishes on Ozon's bank domain, which asks for the
+    account's bank passcode — a credential this server neither holds nor should.
+    So the deliverable is ``payment_url`` for a person to complete, not a
+    settled payment. Ordering pay-on-delivery avoids the step entirely.
+    """
+    _require_writes()
+    session = get_session()
+
+    created = session.action(_CREATE_PAYMENT_ACTION, {"orderNumber": order})
+    url = _payment_url(created)
+    if url is None:
+        starter = _follow_action(session.fetch(f"/my/orderdetails/?order={order}"), _PAY_ACTION)
+        if starter is None:
+            return PaymentRequested(order_number=order, detail="this order has nothing left to pay")
+        started = session.action(str(starter["link"]), starter.get("params") or {})
+        following = (started.get("data") or {}).get("action") or {}
+        if not following.get("link"):
+            return PaymentRequested(order_number=order, detail="Ozon did not offer a payment step")
+        url = _payment_url(session.action(str(following["link"]), following.get("params") or {}))
+
+    return PaymentRequested(
+        order_number=order,
+        payment_url=url,
+        needs_bank_passcode=bool(url and _BANK_HOST in url),
+        detail=None if url else "Ozon created no payment",
+    )
+
+
+def _payment_url(response: dict[str, Any]) -> str | None:
+    data = response.get("data") or {}
+    url = data.get("link") or ((data.get("action") or {}).get("link"))
+    return str(url) if url else None

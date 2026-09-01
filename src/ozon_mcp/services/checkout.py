@@ -294,11 +294,10 @@ def place_order(confirm_total: str) -> OrderPlaced:
     instead of another polling instruction, so this comes back only once the
     order actually exists.
 
-    Paying by card cannot be finished here: Ozon asks for the bank passcode on
-    its own page, which is a person's credential and a deliberate barrier, not a
-    missing feature. Such an order is still created — ``awaiting_payment`` is
-    set and ``payment_url`` points at that page. Pay-on-delivery completes in
-    full.
+    Both payment routes complete: paying from the Ozon Card balance settles when
+    the order is created, and pay-on-delivery leaves nothing to pay today.
+    ``payment_url`` is the page Ozon names for the payment, worth passing on if a
+    payment ever does need finishing.
     """
     if not get_settings().enable_orders:
         raise OrdersDisabledError
@@ -321,13 +320,11 @@ def place_order(confirm_total: str) -> OrderPlaced:
             # A card order puts the number in returnLink and the confirmation
             # page in link; a pay-on-delivery order puts the number in link.
             number = re.search(r"orderNumber=([\w\-]+)", back) or re.search(r"orderNumber=([\w\-]+)", link)
-            pending = "payment-confirm" in link
             return OrderPlaced(
                 order_number=number.group(1) if number else None,
                 total=actual,
-                link=back or link or None,
-                awaiting_payment=pending,
-                payment_url=link if pending else None,
+                link=back or None,
+                payment_url=link or None,
             )
         pooling = data.get("poolingDetails") or {}
         time.sleep((pooling.get("delay") or 500) / 1000)

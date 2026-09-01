@@ -50,6 +50,7 @@ a persistent browser profile seeded by one interactive login.
 | `check_favorite_price_drops` | Price diff for favorites since the previous call |
 | `get_checkout` | The order being formed: payment, pay-on-delivery, destinations, pickup points, dates, points, totals |
 | `configure_checkout` | Set payment, points, pay-on-delivery and pickup point in one call |
+| `pay_order` | Charge an order left unpaid; returns the page where Ozon completes it |
 | `place_order` | **Spends money** — submit, waiting until the order exists (gated by `OZON_ENABLE_ORDERS`) |
 | `list_cancel_reasons` | Reasons Ozon accepts for cancelling an order |
 | `cancel_order` | Cancel an order, returning items to the cart (gated) |
@@ -164,11 +165,14 @@ make check-all   # ruff format-check + ruff lint + ty typecheck + pytest
 - **Per-shipment destinations are handled but unverified.** An order can split
   into shipments with their own addresses; that path is covered by construction
   and by a unit test, not against a live multi-destination order.
-- **Paying by card ends outside this server.** The order is created, then Ozon
-  asks for the bank passcode on its own page — a person's credential, and a
-  deliberate barrier rather than a missing feature. `place_order` returns the
-  order number with `awaiting_payment` and a `payment_url` to finish at.
-  Pay-on-delivery completes in full.
+- **A card charge finishes on Ozon's bank domain**, which asks for the
+  account's bank passcode. `pay_order` drives the payment to that point and
+  returns the page; completing it is the account owner's step, since this server
+  holds no banking credentials. Ordering pay-on-delivery avoids it.
+- **Do not send the browser to `finance.ozon.ru`.** That domain signs the
+  session out, and because the profile is persistent Chrome writes the
+  signed-out state straight to disk. A backup profile is kept and restored
+  automatically, but avoid the trip.
 - **Placing an order spends real money** and is gated separately from every
   other write, behind `OZON_ENABLE_ORDERS`.
 

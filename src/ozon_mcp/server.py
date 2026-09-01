@@ -24,7 +24,13 @@ from ozon_mcp.models.catalog import (
     SearchFilter,
     Tile,
 )
-from ozon_mcp.models.checkout import CancelReason, Checkout, OrderCancelled, OrderPlaced
+from ozon_mcp.models.checkout import (
+    CancelReason,
+    Checkout,
+    OrderCancelled,
+    OrderPlaced,
+    PaymentRequested,
+)
 from ozon_mcp.models.finance import Finances, Points
 from ozon_mcp.models.lists import ListRef, PriceDiff
 from ozon_mcp.models.orders import Order, OrderProduct
@@ -278,6 +284,17 @@ async def place_order(confirm_total: str) -> OrderPlaced:
     that to cancel_order to undo.
     """
     return await run_blocking(lambda: checkout.place_order(confirm_total))
+
+
+@mcp.tool()
+async def pay_order(order: str) -> PaymentRequested:
+    """[GATED] Ask Ozon to charge an order left in «Ожидаем оплаты».
+    Returns the page where the charge is completed. That page is on Ozon's bank
+    domain and asks for the account's bank passcode, so hand `payment_url` to the
+    user — this server does not hold banking credentials.
+    Ordering with pay-on-delivery avoids this entirely.
+    """
+    return await run_blocking(lambda: orders.pay_order(order))
 
 
 @mcp.tool()

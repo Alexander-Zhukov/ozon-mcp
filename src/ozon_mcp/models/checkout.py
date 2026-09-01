@@ -119,16 +119,16 @@ class Checkout(OzonModel):
 class OrderPlaced(OzonModel):
     """Result of a submitted order, once Ozon has actually created it.
 
-    A card-paid order is created but not yet paid: Ozon then asks for the bank
-    passcode on its own page, which is a person's step by design. ``payment_url``
-    is where that happens and ``awaiting_payment`` says it is still pending —
-    the order exists either way and can be cancelled by number.
+    Paying from the Ozon Card balance settles with the order — no confirmation
+    step. ``payment_url`` is the page Ozon names for the payment anyway; it is
+    worth passing on when a payment does need finishing (another card, an
+    insufficient balance), but its presence alone does not mean the order is
+    unpaid.
     """
 
     order_number: str | None = None
     total: str | None = None
     link: str | None = None
-    awaiting_payment: bool = False
     payment_url: str | None = None
 
 
@@ -151,4 +151,19 @@ class OrderCancelled(OzonModel):
     cancelled: bool = False
     reason_id: str | None = None
     returned_to_cart: bool = False
+    detail: str | None = None
+
+
+class PaymentRequested(OzonModel):
+    """Where a card payment stands after asking Ozon to charge it.
+
+    Ozon runs the charge on its bank domain, which asks for the account's bank
+    passcode — a credential this server neither holds nor should. So the chain is
+    driven as far as it goes and ``payment_url`` is handed back for a person to
+    finish; ``needs_bank_passcode`` says that is what is waiting.
+    """
+
+    order_number: str
+    payment_url: str | None = None
+    needs_bank_passcode: bool = False
     detail: str | None = None
