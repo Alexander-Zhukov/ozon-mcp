@@ -57,7 +57,7 @@ def list_favorites(limit: int = 100) -> list[Tile]:
     """
     from ozon_mcp.services.catalog import _paginate_tiles  # ruff: ignore[import-outside-top-level] - avoids a cycle
 
-    return _paginate_tiles("/my/favorites", limit)
+    return _paginate_tiles("/my/favorites", limit, counter="favoriteCounter")
 
 
 def check_favorite_price_drops() -> PriceDiff:

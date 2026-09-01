@@ -40,7 +40,7 @@ a persistent browser profile seeded by one interactive login.
 | `get_description` | Description text + embedded images |
 | `delivery_estimate` | When it arrives, to which address, from which warehouse |
 | `find_cheaper` | Find the same/similar product cheaper |
-| `get_cart` | Whole cart: items, quantities, ticks, Ozon's group headings |
+| `get_cart` | Whole cart: items, quantities, ticks, group headings, and the size Ozon declares |
 | `set_cart_quantity` | Set quantity; 0 removes (gated) |
 | `select_cart_items` | Tick what makes up the order — only / add / remove / all / none (gated) |
 | `list_favorites` | Favorites as product tiles (paginated through) |
