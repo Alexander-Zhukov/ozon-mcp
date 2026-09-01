@@ -2,218 +2,186 @@
 
 # Ozon MCP
 
-[Model Context Protocol](https://modelcontextprotocol.io/) server for the
-[ozon.ru](https://www.ozon.ru/) **buyer account**. Gives an LLM access to your
-orders, purchase history, cart, favorites, collections/wishlists, product cards
-(variants, photos, reviews, descriptions, characteristics), catalog search with
-filters, and Ozon Card / points — over Ozon's internal `composer-api`.
+An [MCP](https://modelcontextprotocol.io/) server for one **ozon.ru buyer
+account**. It reads orders, purchases, returns, the cart, favorites, wishlists,
+«Подборки», product cards, catalog search, the Ozon Card balance and points —
+and, when explicitly allowed, changes the cart and the lists and runs an order:
+forming a checkout, placing it, paying, cancelling it item by item.
 
-> Unlike catalog-only scrapers, this server works under your **authenticated
-> session**, so it can read personal data (orders, purchases, cart, balance) and
-> — when explicitly enabled — mutate the cart and favorites.
+None of this has a public API. The server talks to the same internal
+`composer-api` / `entrypoint-api` endpoints the site's own frontend uses, under
+your authenticated session.
+
+## Requirements
+
+- **A Russian IP.** Ozon blocks datacenter and VPN egress.
+- **A real Chromium.** Headless is detected; the image runs it under Xvfb.
+- **One interactive login**, performed once against the profile directory.
+- `--shm-size=1g`. Chromium crashes on Docker's default 64 MB.
 
 ## How it works
 
-Ozon's Variti antibot blocks non-browser clients, so the session **bootstraps
-once** with a real headed Chromium under Xvfb (passes the challenge, harvests
-cookies + client-hint headers). Thereafter every read and write goes out over
-[`curl_cffi`](https://github.com/lexiforest/curl_cffi) (Chrome TLS
-impersonation) as direct HTTP — **no tool renders a page**, which is what makes
-calls take ~0.1s instead of ~15s. The browser stays only to own the profile and
-refresh the session; it is the fallback for one reading, the delivery estimate.
+The Variti antibot blocks non-browser clients, but a browser only has to pass
+the challenge once. A real Chromium starts, passes it, and hands over its
+cookies and the exact client-hint header set; from then on every read and write
+is a direct HTTP call through [`curl_cffi`](https://github.com/lexiforest/curl_cffi)
+with Chrome's TLS fingerprint. No tool renders a page, which is why a call takes
+about 0.2 s instead of 15. The browser stays only to own the profile, refresh
+the session, and serve as the fallback for one reading — the delivery estimate.
 
-Requirements: run from a **Russian IP** (Ozon blocks datacenter/VPN egress) and
-a persistent browser profile seeded by one interactive login.
+The session lives in a **persistent Chromium profile**, not a cookie snapshot.
+OzonID, the auth realm guarding checkout, keeps its state outside cookies and
+localStorage, so a Playwright `storage_state` snapshot silently loses it and
+checkout falls back to a login prompt. A profile directory keeps everything, so
+one login stays valid and the server runs unattended.
+
+Playwright's sync API cannot run inside a live event loop, and its objects
+belong to the thread that created them, so tool calls are dispatched to a single
+worker thread. They are therefore serialised, and a slow one — a bootstrap, a
+login — makes the others wait.
 
 ## Tools
 
-| Tool | Description |
+**Orders and returns**
+
+| Tool | |
 |---|---|
-| `list_orders` | Orders (active / archive / all), with their order_number, optionally within an ISO date range |
+| `list_orders` | Orders (active / archive / all), each with its `order_number`, status, pickup point, slot and total; optionally within an ISO date range |
 | `order_products` | Items of one order: sku, title, price paid, variant, seller |
-| `purchases` | Purchase history — all of it, or a fast server-side search |
-| `list_returns` | Buyer returns: number, date, status, amount, products |
-| `search` | Storefront search by text and/or category, with sort and facet filters |
-| `get_search_filters` | Facets available for a query (category / brand / price range / …) |
-| `product_details` | Card: price, variants, characteristics, photos; description and reviews on request |
-| `get_reviews` | Reviews with score, text, dates and photos |
-| `get_description` | Description text + embedded images |
-| `delivery_estimate` | When it arrives, to which address, from which warehouse |
-| `find_cheaper` | Find the same/similar product cheaper |
-| `get_cart` | Whole cart: items, quantities, ticks, group headings, and the size Ozon declares |
-| `set_cart_quantity` | Set quantity; 0 removes (gated) |
-| `select_cart_items` | Tick what makes up the order — only / add / remove / all / none (gated) |
-| `list_favorites` | Favorites as product tiles (paginated through) |
-| `set_favorite` | Add to / remove from favorites (gated) |
+| `purchases` | Everything ever bought, as product tiles; with a query, Ozon's own search over the history |
+| `list_returns` | Returns: number, date, status, amount, the products going back |
+
+**Catalog**
+
+| Tool | |
+|---|---|
+| `search` | Storefront search by text and/or category slug, with sort and facet filters |
+| `get_search_filters` | Facets available for a query, and the values `search` takes |
+| `product_details` | Card: price, variants (each with its own sku), characteristics, photos; description and reviews on request |
+| `get_reviews` | Reviews with score, text, dates, photos |
+| `get_description` | Description text plus the images embedded in it |
+| `delivery_estimate` | When a product would arrive, to which address, from which warehouse |
+| `find_cheaper` | The same or a similar product below the current price |
+
+**Cart**
+
+| Tool | |
+|---|---|
+| `get_cart` | The whole cart: items, quantities, ticks, group headings, and the size Ozon declares |
+| `set_cart_quantity` | Set the quantity; 0 removes |
+| `select_cart_items` | Tick what makes up the order — `only` / `add` / `remove` / `all` / `none` |
+
+**Favorites and wishlists**
+
+| Tool | |
+|---|---|
+| `list_favorites` | Favorites as product tiles |
+| `set_favorite` | Add or remove |
 | `get_lists` | Wishlists with their ids and sizes; with a sku, whether each holds it |
-| `create_list` / `delete_list` | Make a wishlist or delete one (gated) |
-| `set_list_membership` | Put a product in a list or take it out (gated) |
-| `list_selections` / `get_selection` | «Подборки»: sizes, statuses, description, visibility |
-| `create_selection` / `edit_selection` / `delete_selection` | Make, rename, remove one (gated) |
-| `set_selection_items` | Set which products a selection holds (gated) |
-| `set_selection_public` | Publish a selection to the public profile, or unpublish (gated) |
-| `check_favorite_price_drops` | Price diff for favorites since the previous call |
-| `get_checkout` | The order being formed: payment, pay-on-delivery (and how much of the order it covers), destinations, pickup points, shipments with their items, points, totals |
+| `create_list` / `delete_list` | Make a wishlist, or delete one |
+| `set_list_membership` | Put a product in a wishlist or take it out |
+| `check_favorite_price_drops` | Price changes since the previous call |
+
+**«Подборки»**
+
+| Tool | |
+|---|---|
+| `list_selections` | Selections with size, status and ids |
+| `get_selection` | One selection in full, including description and visibility |
+| `create_selection` | Create one around a product; private by default |
+| `set_selection_items` | Set which products it holds |
+| `edit_selection` | Rename it, replace its description |
+| `set_selection_public` | Publish to the public profile, or unpublish |
+| `delete_selection` | Delete it; the products stay |
+
+**Checkout**
+
+| Tool | |
+|---|---|
+| `get_checkout` | The order being formed: payment methods, pay-on-delivery, destinations, pickup points, shipments, points, totals |
 | `configure_checkout` | Set payment, points, pay-on-delivery and pickup point in one call |
-| `pay_order` | Charge an order left unpaid; returns the page where Ozon completes it |
-| `place_order` | **Spends money** — submit, waiting until the order exists (gated by `OZON_ENABLE_ORDERS`) |
-| `list_cancel_reasons` | Reasons Ozon accepts for cancelling an order |
-| `cancel_order` | Cancel an order, or just some of its items, returning them to the cart (gated) |
-| `session_status` | Whether the session acts as the account — and which gates are open |
+| `place_order` | **Spends money.** Submit, waiting until the order exists |
+| `pay_order` | Charge an order left unpaid, and report what is left to do |
+| `list_cancel_reasons` | Reasons Ozon accepts for cancelling |
+| `cancel_order` | Cancel an order, or named items of it, returning them to the cart |
+
+**Session and money**
+
+| Tool | |
+|---|---|
+| `session_status` | Whether the session acts as the account, and which gates are open |
 | `start_login` / `submit_login_code` | Restore a dead session with a one-time code |
 | `get_finances` | Ozon Card balance and total points |
-| `get_points` | Points by type + burning + per-store seller bonuses |
+| `get_points` | Points by type, burning points, per-store seller bonuses |
 
-Mutation tools are **disabled by default** — set `OZON_ENABLE_WRITES=1` to allow
-them.
+Changing the account is off by default. `OZON_ENABLE_WRITES=1` allows the cart,
+favorites, lists and cancellations; `OZON_ENABLE_ORDERS=1` allows `place_order`
+and is separate because it spends money. `session_status` reports both, so a
+caller can plan around them instead of finding out halfway through.
 
-### Wishlists and «Подборки» are two different things
+## What a caller needs to know
 
-A **wishlist** (вишлист) is a plain list with a numeric id: `get_lists`,
-`create_list`, `set_list_membership`. A **«Подборка»** is a curated, publishable
-one — it has a uuid, a cover, a description and a visibility, and it lives
-behind its own endpoints. Both are covered, and neither substitutes for the
-other.
+Some of Ozon's behaviour does not follow from a tool's name.
 
-Three things about selections have no equivalent on the wishlist side, and all
-three are settled by the API rather than assumed:
+**The cart ticks are the order.** `get_checkout` reports nothing orderable until
+something is ticked, and it orders exactly what is ticked — so "buy these two"
+is `select_cart_items(skus, mode="only")`, whatever else the cart holds.
 
-- **Products come from favorites only.** Ozon's own picker offers nothing else,
-  so `set_favorite` first; a product that is not favorited is dropped silently.
-- **One call sets the whole product list**, so removing is passing the products
-  that should stay. `set_selection_items` reads the resulting count back.
-- **Publishing is outward-facing and reviewed.** It puts the selection on the
-  account owner's public profile, so `create_selection` defaults to private, and
-  the status reads "На модерации" for a while afterwards — which is why
-  visibility is reported separately as `public`, read from the selection itself.
+**Two money figures, never interchangeable.** `totals.total` is what Ozon charges
+today; `totals.order_total` is what the order costs. On a pay-on-delivery order
+today's charge is 0 ₽, so `order_total` is the figure to quote to a person.
 
-## Using it from an agent
+**Pay-on-delivery is not all-or-nothing.** Ozon defers payment per shipment, so
+an order can be part deferred and part prepaid — an imported item usually has to
+be paid up front. `pay_after_receipt.scope` is `full`, `partial` or `none`; on a
+partial order `pay_now_items` and `pay_on_receipt_items` name the lines on each
+side, as Ozon splits them.
 
-The server is meant to be usable with nothing but its own schema, because that
-is all an agent gets. Three things carry that weight:
+**Wishlists and «Подборки» are different things.** A wishlist has a numeric id
+and holds anything. A selection has a uuid, a cover, a description and a
+visibility; its products come from favorites only, one call sets its whole
+product list, and publishing puts it on the account owner's public profile after
+review.
 
-- **Server instructions**, sent on connect, state the flows: start at
-  `session_status`, what the buying sequence is and why each step is a
-  precondition for the next, and which of the two money figures to quote.
-- **Every argument describes itself** in the JSON schema, and every closed set
-  of values (`scope`, `sort`, `mode`) is an enum there rather than prose to
-  parse.
-- **Errors name the next call.** A signed-out session, a disabled gate and a
-  total that no longer matches each explain what to do — they are written to be
-  relayed to the user.
+**Cancelling works line by line.** `cancel_order(order, skus=[...])` drops those
+items and leaves the rest of the order standing, in as many passes as it has
+items.
 
-`session_status` answers what cannot be guessed: whether the session is alive
-and whether writes and order placement are allowed. Those two are the
-operator's settings, so an agent should plan around them rather than discover
-them halfway through an order.
+**A card charge finishes on Ozon's bank domain**, which signs the account in to
+the bank. `pay_order` drives the payment to that point and reports what remains:
+the amount, how much to top the card up by, and the page to finish at.
+Pay-on-delivery avoids the whole thing.
 
-### Pay-on-delivery is not all-or-nothing
-
-Ozon defers payment **per shipment**, so an order can be part deferred and part
-prepaid — an imported item usually has to be paid up front while the rest waits
-until pickup. `pay_after_receipt.scope` names the case (`full` / `partial` /
-`none`), and on a partial order the amounts are split out: `prepayment_amount`
-now, `post_payment_amount` on receipt, with `note` saying it in one sentence.
-
-Which *items* fall on which side is Ozon's own answer, not a guess:
-`pay_now_items` and `pay_on_receipt_items` come from the breakdown behind the
-«Есть предоплата N ₽» row — that row is a control, not a caption. Shipments are
-marked `prepaid` from those lists, and a shipment holding items from both sides
-stays `null` rather than being forced into one. If a page ever offers no
-breakdown, the one published figure is matched against the shipments' own sums
-instead, and an ambiguous match stays `null` too.
-
-## Layout
-
-```
-src/ozon_mcp/
-  main.py              assembles the server: every tool module attached
-  mcp_server.py        the FastMCP instance and the instructions a client gets
-  tools/<domain>.py    the tools themselves, one module per domain
-  services/<domain>.py orchestration: what a tool means in Ozon's terms
-  parsing/<domain>.py  turning Ozon's widget JSON into DTOs
-  session/transport.py the one client: browser bootstrap, HTTP, retries, login
-  models/<domain>.py   the DTOs a caller sees, and their enums
-```
-
-Errors carry a code as well as a sentence — `[rate_limited]`, `[session_expired]`,
-`[writes_disabled]` — so a caller can branch on the code and relay the sentence.
-
-## Session and state
-
-**If the session dies, the tools say so.** A signed-out session otherwise looks
-exactly like an empty account — no orders, no balances, no explanation — so every
-tool raises instead of answering, `session_status` reports the state, and
-`start_login` / `submit_login_code` restore it with a one-time code. A profile
-that is known to be signed in is copied, and a sign-out is recovered from that
-copy automatically, so in most cases nobody is asked for a code at all.
-
-
-The session lives in a **persistent Chromium profile**, not a cookie snapshot.
-That is deliberate: OzonID — the auth realm guarding checkout — keeps its
-session outside cookies and localStorage, so a Playwright `storage_state`
-snapshot silently loses it and checkout falls back to a login prompt. A real
-profile directory keeps everything, so one login stays valid and the server
-runs unattended afterwards.
-
-Login itself (email/phone + one-time code) is a **manual, one-time onboarding**
-performed once against the profile directory.
-
-**`/data` must be a bind mount.** It holds the profile, and Ozon rotates the
-session constantly — cookies rotated over HTTP are pushed back into the profile
-so the refresh chain survives a restart. On an ephemeral directory you lose the
-login on every container recreation.
-
-```bash
--v /opt/ozon-mcp:/data
-```
-
-`/data` holds `profile/` (the session) and `price_history.json` (favorites price
-snapshots). A legacy `state.json`, if present, is imported once to seed a brand
-new profile — enough for the read tools, but not for checkout.
-
-> **The profile is a credential.** It grants full access to the account —
-> orders, addresses, card balance, and the checkout flow. Never commit it; back
-> it up encrypted.
-
-**Two things that will bite you**, both learned the hard way:
-
-- **Refresh tokens are single-use.** Restoring an older copy of a session fails
-  and lands you on an anonymous one, so an old backup is not a rollback.
-- **Chromium writes its cookie jar out when it exits, not as it goes.** The
-  server closes the browser at process exit and before backing the profile up,
-  because a profile copied from under a running Chromium — or a container simply
-  stopped — is the session as it was *before* the login.
-- **Visiting the checkout login flow downgrades the session to a guest.** The
-  server refuses to persist such a state rather than overwriting a working
-  login with it.
+**Errors carry a code as well as a sentence** — `[rate_limited]`,
+`[session_expired]`, `[writes_disabled]`, `[orders_disabled]`,
+`[total_mismatch]`, `[upstream_unavailable]`. Branch on the code; the sentence is
+written to be relayed to a person. A failure never arrives as an empty result: a
+502 or a timeout raises, because "no orders" and "Ozon did not answer" are
+different answers.
 
 ## Configuration
 
-| Env var | Default | Description |
+| Variable | Default | |
 |---|---|---|
 | `OZON_PROFILE_DIR` | `/data/profile` | Persistent Chromium profile holding the session |
-| `OZON_STATE` | `/data/state.json` | Legacy snapshot, imported once to seed a new profile |
+| `OZON_PROFILE_BACKUP` | `/data/profile.backup` | Copy of a known-good profile, restored on a sign-out |
+| `OZON_STATE_PATH` | `/data/state.json` | Legacy cookie snapshot, imported once to seed a new profile |
 | `OZON_IMPERSONATE` | `chrome124` | curl_cffi TLS-impersonation profile |
-| `OZON_ENABLE_WRITES` | `0` | Allow cart/favorites/list mutations |
-| `OZON_ENABLE_ORDERS` | `0` | Allow `place_order` — **spends money**, gated separately |
+| `OZON_ENABLE_WRITES` | `0` | Allow cart / favorites / list / cancellation changes |
+| `OZON_ENABLE_ORDERS` | `0` | Allow `place_order` — spends money |
 | `OZON_MONITOR_STORE` | `/data/price_history.json` | Favorites price-history file |
+| `OZON_REQUEST_TIMEOUT` | `30` | Seconds for one HTTP call |
+| `OZON_REQUEST_ATTEMPTS` | `3` | Attempts before a call is reported as failed |
+| `OZON_RETRY_BACKOFF_SECONDS` | `1` | Base wait between attempts, doubled and jittered |
+| `OZON_RETRY_CAP_SECONDS` | `20` | Longest wait, including a `Retry-After` Ozon asks for |
+| `OZON_BROWSER_TIMEOUT` | `60` | Seconds for a browser navigation or a login step |
+| `OZON_IDLE_SECONDS` | `600` | Close the idle browser; the HTTP session stays |
 | `OZON_TRANSPORT` | `stdio` | `stdio` (client spawns the process) or `sse` (HTTP service) |
-| `OZON_HOST` | `0.0.0.0` | Bind address for the `sse` transport |
-| `OZON_PORT` | `8084` | Port serving `/sse` and `/metrics` |
+| `OZON_HOST` / `OZON_PORT` | `0.0.0.0` / `8084` | Bind for `sse`; the same port serves `/metrics` |
 
 See `env.example`.
 
-## Transports and metrics
-
-`stdio` is the default and suits a client that launches the server itself.
-`sse` runs it as a long-lived HTTP service — that is how a remote agent
-attaches — and the same port also serves Prometheus metrics at `/metrics`
-(upstream request outcomes, latency, antibot re-challenges, browser state).
-
-## Run
-
-Docker (headed Chromium + Xvfb are handled by the image):
+## Running
 
 ```bash
 docker build -t ozon-mcp .
@@ -226,52 +194,93 @@ docker run -d --name ozon-mcp --shm-size=1g -v /opt/ozon-mcp:/data \
   -e OZON_TRANSPORT=sse -p 8084:8084 ozon-mcp
 ```
 
-`--shm-size=1g` is not optional: Chromium crashes on Docker's default 64 MB
-shared memory.
+`/data` has to be a bind mount. It holds the profile, and Ozon rotates the
+session constantly: cookies rotated over HTTP are pushed back into the profile so
+the refresh chain survives a restart. On an ephemeral directory the login is lost
+on every container recreation.
 
-Locally with [uv](https://docs.astral.sh/uv/):
+> **The profile is a credential.** It grants full access to the account —
+> orders, addresses, card balance, checkout. Never commit it; back it up
+> encrypted.
+
+Locally, with [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv sync
 uv run playwright install --with-deps chromium
-uv run python -m ozon_mcp   # needs a display / Xvfb for the bootstrap
+uv run python -m ozon_mcp   # needs a display or Xvfb
 ```
+
+Under `sse` the same port serves Prometheus metrics at `/metrics`: upstream
+request outcomes and latency, antibot re-challenges, session bootstraps, browser
+state.
+
+## Session lifetime
+
+A signed-out session looks exactly like an empty account — no orders, no
+balances, no explanation — so every tool raises instead of answering,
+`session_status` reports the state, and `start_login` / `submit_login_code`
+restore it with a one-time code that only the account owner receives.
+
+A profile known to be signed in is copied, and a sign-out is recovered from that
+copy automatically, so in most cases nobody is asked for a code. Two things about
+that copy are worth knowing:
+
+- **Refresh tokens are single-use.** Restoring an older copy lands on an
+  anonymous session, so an old backup is not a rollback.
+- **Chromium writes its cookie jar out when it exits, not as it goes.** The
+  server closes the browser before copying the profile and at process exit; a
+  container simply killed loses whatever had not been flushed.
+
+Opening the checkout login flow, or `finance.ozon.ru`, downgrades the session to
+a guest one. The server refuses to persist that over a working login.
+
+## Several agents at once
+
+Multiple clients can connect over `sse`, and each gets its own MCP session. They
+share one Ozon account and one worker thread, which has two consequences.
+
+Calls are serialised: a second agent waits out the first, including a
+13-second browser bootstrap.
+
+More importantly, **the account state is shared**. Cart ticks live on Ozon's
+side, not in the MCP session, so two agents composing orders at once overwrite
+each other's selection — and `place_order` buys whatever is ticked at that
+moment, at a total the caller read a second earlier. Reads are safe for any
+number of agents; writes are not. Keep one writer per account.
+
+The `sse` endpoint has no authentication: whoever reaches the port has the
+account.
+
+## Limitations
+
+- Only saved addresses can be chosen. `configure_checkout` switches between the
+  points in the account's address book; adding one from the map is not
+  implemented.
+- A selection's cover cannot be uploaded; that is a multipart upload and is not
+  covered.
+- Per-shipment destinations are handled but unverified against a live order Ozon
+  actually split across addresses.
+- `pay_order` cannot complete a card charge: that happens on Ozon's bank domain
+  and needs banking credentials this server does not hold.
+- Placing an order spends real money, and is gated separately from every other
+  write.
 
 ## Development
 
 ```bash
-make check-all   # ruff format-check + ruff lint + ty typecheck + pytest
+make check-all   # ruff format --check, ruff check, ty, pytest with a coverage gate
 ```
 
-## Limitations
-
-- **A Russian IP is required.** Ozon blocks datacenter and VPN egress.
-- **A real Chromium is required** for the bootstrap; headless is detected.
-- **The profile must be seeded by one interactive login.** OzonID — the auth
-  realm guarding checkout — keeps state a cookie snapshot cannot carry, so the
-  browser runs on a persistent profile; see [Session and state](#session-and-state).
-- **Only saved addresses can be chosen.** `configure_checkout` switches between
-  the points already in the account's address book; adding a new one from the
-  map is not implemented.
-- **Per-shipment destinations are handled but unverified.** An order can split
-  into shipments with their own addresses; that path is covered by construction
-  and by a unit test, not against a live multi-destination order.
-- **A card charge finishes on Ozon's bank domain**, which signs the account in
-  to the bank. `pay_order` drives the payment to that point and reports exactly
-  what is left: the amount, how much to top the card up by if the balance falls
-  short, and the page to finish at. Completing it is the account owner's step —
-  this server holds no banking credentials. Pay-on-delivery avoids it entirely.
-- **Do not send the browser to `finance.ozon.ru`.** That domain signs the
-  session out, and because the profile is persistent Chrome writes the
-  signed-out state straight to disk. A backup profile is kept and restored
-  automatically, but avoid the trip.
-- **Placing an order spends real money** and is gated separately from every
-  other write, behind `OZON_ENABLE_ORDERS`.
+`ty` runs with `all = "error"`, ruff with `select = ["ALL"]` and a curated ignore
+list. Tests mirror `src/`; the service layer is driven through a stand-in for
+`get_session()` and the transport through a stand-in for the HTTP session, so
+nothing in the suite touches the network.
 
 ## Disclaimer
 
-Scraping a personal account is against Ozon's Terms of Service; this project is
-for personal, low-volume use. You are responsible for how you use it.
+Scraping a personal account is against Ozon's Terms of Service. This project is
+for personal, low-volume use, and you are responsible for how you use it.
 
 ## License
 
