@@ -175,10 +175,11 @@ make check-all   # ruff format-check + ruff lint + ty typecheck + pytest
 - **Per-shipment destinations are handled but unverified.** An order can split
   into shipments with their own addresses; that path is covered by construction
   and by a unit test, not against a live multi-destination order.
-- **A card charge finishes on Ozon's bank domain**, which asks for the
-  account's bank passcode. `pay_order` drives the payment to that point and
-  returns the page; completing it is the account owner's step, since this server
-  holds no banking credentials. Ordering pay-on-delivery avoids it.
+- **A card charge finishes on Ozon's bank domain**, which signs the account in
+  to the bank. `pay_order` drives the payment to that point and reports exactly
+  what is left: the amount, how much to top the card up by if the balance falls
+  short, and the page to finish at. Completing it is the account owner's step —
+  this server holds no banking credentials. Pay-on-delivery avoids it entirely.
 - **Do not send the browser to `finance.ozon.ru`.** That domain signs the
   session out, and because the profile is persistent Chrome writes the
   signed-out state straight to disk. A backup profile is kept and restored

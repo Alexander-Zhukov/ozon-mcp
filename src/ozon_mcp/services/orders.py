@@ -186,8 +186,29 @@ def list_cancel_reasons(order: str) -> list[CancelReason]:
     return reasons
 
 
+def _searchable(node_source: Any) -> list[Any]:
+    """Nodes to walk, parsing a whole page response when given one.
+
+    A raw response keeps every widget as a JSON *string*, so walking it finds
+    no actions at all — which reads as "Ozon offered nothing" while the button
+    is right there.
+    """
+    if isinstance(node_source, dict) and "widgetStates" in node_source:
+        states = [widget(node_source, key.split("-")[0]) for key in node_source["widgetStates"]]
+        return [state for state in states if state is not None]
+    return [node_source]
+
+
 def _follow_action(node_source: Any, needle: str) -> dict[str, Any] | None:
     """The first action whose link mentions ``needle``, wherever it is hung."""
+    for source in _searchable(node_source):
+        found = _action_in(source, needle)
+        if found is not None:
+            return found
+    return None
+
+
+def _action_in(node_source: Any, needle: str) -> dict[str, Any] | None:
     for node in walk(node_source):
         for holder in (node, node.get("common") if isinstance(node.get("common"), dict) else {}):
             action = holder.get("action") if isinstance(holder, dict) else None
@@ -273,41 +294,119 @@ _CREATE_PAYMENT_ACTION: Final = "v2/createPayment"
 _BANK_HOST: Final = "finance.ozon.ru"
 
 
+_SHORTFALL_RE: Final = re.compile(r"не хватает\s+([\d\s\u202f\u00a0,.]+₽)")
+_KOPECKS: Final = 100
+
+
+def _money(kopecks: str | None) -> str | None:
+    """Ozon states amounts in kopecks on this action; people read roubles."""
+    if not kopecks or not str(kopecks).isdigit():
+        return None
+    value = int(kopecks) / _KOPECKS
+    whole = f"{int(value):,}".replace(",", " ")
+    return f"{whole} ₽" if value == int(value) else f"{whole},{round(value % 1 * _KOPECKS):02d} ₽"
+
+
 def pay_order(order: str) -> PaymentRequested:
     """Ask Ozon to charge an order that is still awaiting payment.
 
     ``v2/createPayment`` is asked directly rather than hunted for on the order
     page: the page grows its pay button only some time after the order appears,
-    so a freshly placed order would read as "nothing to pay". The page's own
-    action is still tried as a fallback, since it carries the payment method and
-    amount when Ozon wants them stated.
+    so a freshly placed order would read as "nothing to pay". The page is still
+    read, because it is where Ozon states the amount and — when the Ozon Card
+    balance does not cover it — how much is missing.
 
-    The charge itself finishes on Ozon's bank domain, which asks for the
-    account's bank passcode — a credential this server neither holds nor should.
-    So the deliverable is ``payment_url`` for a person to complete, not a
-    settled payment. Ordering pay-on-delivery avoids the step entirely.
+    The charge finishes on Ozon's bank domain, which asks the account to sign in
+    to the bank. That is the account owner's step, so the result spells out what
+    remains: top up by ``shortfall`` if set, then complete at ``payment_url``.
     """
     _require_writes()
     session = get_session()
+    page = session.fetch(f"/my/orderdetails/?order={order}")
+    starter = _follow_action(page, _PAY_ACTION)
+    params = (starter or {}).get("params") or {}
+    amount = _money(params.get("totalPrice") or params.get("finalPrepayPrice"))
+
+    if amount is None:
+        amount = _amount_due(page)
+
+    texts = [text for text in find_all(page, "text") if isinstance(text, str)]
+    shortfall = next(
+        (match.group(1).strip() for text in texts if (match := _SHORTFALL_RE.search(text))),
+        None,
+    )
+    if shortfall is None:
+        # Ozon only prints the gap once it has noticed it; the numbers are known
+        # here either way, and a caller needs to hear the amount, not wait.
+        shortfall = _gap(amount)
 
     created = session.action(_CREATE_PAYMENT_ACTION, {"orderNumber": order})
     url = _payment_url(created)
-    if url is None:
-        starter = _follow_action(session.fetch(f"/my/orderdetails/?order={order}"), _PAY_ACTION)
-        if starter is None:
-            return PaymentRequested(order_number=order, detail="this order has nothing left to pay")
-        started = session.action(str(starter["link"]), starter.get("params") or {})
+    if url is None and starter is not None:
+        started = session.action(str(starter["link"]), params)
         following = (started.get("data") or {}).get("action") or {}
-        if not following.get("link"):
-            return PaymentRequested(order_number=order, detail="Ozon did not offer a payment step")
-        url = _payment_url(session.action(str(following["link"]), following.get("params") or {}))
+        if following.get("link"):
+            url = _payment_url(session.action(str(following["link"]), following.get("params") or {}))
 
+    if url is None:
+        return PaymentRequested(
+            order_number=order,
+            amount_due=amount,
+            shortfall=shortfall,
+            detail="this order has nothing left to pay",
+        )
+
+    needs_bank = _BANK_HOST in url
+    steps = []
+    if shortfall:
+        steps.append(f"top up the Ozon Card by {shortfall}")
+    if needs_bank:
+        steps.append(f"open {url} and sign in to Ozon Bank to complete the payment")
     return PaymentRequested(
         order_number=order,
+        amount_due=amount,
+        shortfall=shortfall,
         payment_url=url,
-        needs_bank_passcode=bool(url and _BANK_HOST in url),
-        detail=None if url else "Ozon created no payment",
+        needs_bank_passcode=needs_bank,
+        next_step="; then ".join(steps) or "complete the payment at payment_url",
+        detail=(
+            f"the Ozon Card balance is short by {shortfall}"
+            if shortfall
+            else "the balance covers the order; only the bank sign-in is left"
+        ),
     )
+
+
+def _kopecks(text: str | None) -> int | None:
+    digits = re.sub(r"[^\d,]", "", (text or "").replace("\u202f", "").replace("\u00a0", ""))
+    if not digits:
+        return None
+    whole, _, cents = digits.partition(",")
+    return int(whole or 0) * _KOPECKS + int((cents + "00")[:2])
+
+
+def _amount_due(page: dict[str, Any]) -> str | None:
+    """The "К оплате" figure Ozon shows on the order itself."""
+    total = widget(page, "orderDoneTotal") or {}
+    block = total.get("total") if isinstance(total, dict) else None
+    right = (block or {}).get("right") if isinstance(block, dict) else None
+    for candidate in find_all(right or {}, "text"):
+        if isinstance(candidate, str) and "₽" in candidate:
+            return str(candidate).strip()
+    return None
+
+
+def _gap(amount: str | None) -> str | None:
+    """What the Ozon Card balance is short of ``amount``, if anything."""
+    from ozon_mcp.services.finance import get_finances  # ruff: ignore[import-outside-top-level] - avoids a cycle
+
+    due = _kopecks(amount)
+    if due is None:
+        return None
+    balance = _kopecks(get_finances().ozon_card_balance)
+    if balance is None or balance >= due:
+        return None
+    return _money(str(due - balance))
 
 
 def _payment_url(response: dict[str, Any]) -> str | None:

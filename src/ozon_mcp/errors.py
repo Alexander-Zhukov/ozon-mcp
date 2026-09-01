@@ -38,13 +38,19 @@ class TotalMismatchError(OzonError):
 
 
 class SessionExpiredError(OzonError):
-    """The stored session is no longer signed in and could not be restored.
+    """The stored session is signed out and could not be restored.
 
     Raised instead of returning empty results, which is what a signed-out
     session otherwise looks like: orders vanish, balances read as None, and
-    nothing says why. Recovering needs a one-time code, so it is the caller's
-    job to ask for one — see ``start_login`` / ``submit_login_code``.
+    nothing says why. The message is written for whoever is driving the agent,
+    because recovery needs a one-time code that only the account owner receives.
     """
 
     def __init__(self, detail: str = "") -> None:
-        super().__init__(f"OZON session is signed out; run start_login() and submit_login_code() to restore it{detail}")
+        super().__init__(
+            "The OZON session is signed out and no saved profile could restore it. "
+            "To recover: call start_login(<account email or phone>), ask the user for the "
+            "one-time code OZON sends, then call submit_login_code(<code>). "
+            "Check session_status() to confirm. Until then no account data can be read"
+            f"{detail}"
+        )
