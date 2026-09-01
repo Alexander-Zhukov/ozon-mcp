@@ -32,7 +32,7 @@ a persistent browser profile seeded by one interactive login.
 | `list_orders` | Orders (active / archive / all), with their order_number, optionally within an ISO date range |
 | `order_products` | Items of one order: sku, title, price paid, variant, seller |
 | `purchases` | Purchase history — all of it, or a fast server-side search |
-| `list_returns` | Buyer returns with their status |
+| `list_returns` | Buyer returns: number, date, status, amount, products |
 | `search` | Storefront search by text and/or category, with sort and facet filters |
 | `get_search_filters` | Facets available for a query (category / brand / price range / …) |
 | `product_details` | Card: price, variants, characteristics, photos; description and reviews on request |

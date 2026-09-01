@@ -10,21 +10,18 @@ Endpoints captured live:
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ozon_mcp.dependencies import get_session
 from ozon_mcp.errors import OzonError, WritesDisabledError
 from ozon_mcp.models.common import WriteResult
 from ozon_mcp.models.lists import ListRef
-from ozon_mcp.models.orders import Return
 from ozon_mcp.parsing import catalog as catalog_parse
-from ozon_mcp.parsing.common import find_all, walk, widget
+from ozon_mcp.parsing.common import find_all
 from ozon_mcp.parsing.lists import parse_list_membership, parse_wishlists
 from ozon_mcp.services import monitoring
 from ozon_mcp.settings import get_settings
 
-# Every return card links to the return it stands for.
-_RETURN_LINK = "/my/returns/"
 # Ozon reports neither success nor refusal for these actions, so the honest
 # answer names the read that settles it rather than claiming an outcome.
 _ACCEPTED = "Ozon accepted the change and reports no outcome for it; confirm with {check} if it matters"
@@ -130,41 +127,6 @@ def set_list_membership(sku: str, list_id: int, *, add: bool = True) -> WriteRes
     path = "v2/favoriteListAdd" if add else "v2/favoriteListRemove"
     get_session().action(path, {"skus": [int(sku)], "id": int(list_id)})
     return WriteResult(detail=_ACCEPTED.format(check="get_lists(sku)"))
-
-
-def list_returns() -> list[Return]:
-    """Buyer returns, read from the cards that link to a return.
-
-    The page also carries a FAQ accordion, and taking every title on it — which
-    is what this did — reported «Почему товар недоступен для возврата?» to the
-    caller as though it were a return. A card is identified by linking to a
-    return, so an account with none answers with none.
-    """
-    state = widget(get_session().fetch("/my/returns"), "returnList") or {}
-    out: list[Return] = []
-    for node in walk(state):
-        link = str(((node.get("action") or {}) if isinstance(node.get("action"), dict) else {}).get("link") or "")
-        if _RETURN_LINK not in link:
-            continue
-        center: dict[str, Any] = node.get("centerBlock") or {}
-        out.append(
-            Return(
-                title=_atom(center.get("title")) if isinstance(center, dict) else None,
-                status=_atom(center.get("subtitle")) if isinstance(center, dict) else None,
-                link=link,
-            )
-        )
-    return out
-
-
-def _atom(node: Any) -> str | None:
-    if isinstance(node, str):
-        return str(node).strip() or None
-    if isinstance(node, dict):
-        text = node.get("text")
-        if isinstance(text, str):
-            return str(text).strip() or None
-    return None
 
 
 def set_favorite(sku: str, *, add: bool = True) -> WriteResult:
