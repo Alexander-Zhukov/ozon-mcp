@@ -1,0 +1,162 @@
+[project]
+name = "ozon-mcp"
+version = "1.0.0"
+description = "Model Context Protocol server for the ozon.ru buyer account: orders, cart, favorites, product cards, purchase history and catalog search over the internal composer-api."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Alexander Zhukov" }]
+requires-python = ">=3.13"
+dependencies = [
+    "mcp>=1.2,<2",
+    "orjson>=3.10",
+    "playwright>=1.40",
+    "curl-cffi>=0.7",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.2",
+    "prometheus-client>=0.20",
+    "uvicorn>=0.30",
+]
+
+[project.scripts]
+ozon-mcp = "ozon_mcp.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ozon_mcp"]
+
+[dependency-groups]
+dev = ["ruff>=0.6", "ty>=0.0.1a1", "pytest>=8", "pytest-asyncio>=0.23", "pytest-cov>=5"]
+
+[tool.uv]
+# ty (Astral's type checker) only ships pre-release builds for now.
+prerelease = "allow"
+
+[tool.ruff]
+line-length = 120
+preview = true
+target-version = "py313"
+src = ["src", "tests"]
+fix = true
+unsafe-fixes = true
+
+[tool.ruff.lint]
+select = ["ALL"]
+# Rules are named rather than coded: ruff asks for names in selectors and
+# rewrites codes on every run, so codes here meant a dirty tree after each lint.
+ignore = [
+    # conflicting docstring styles
+    "incorrect-blank-line-before-class",
+    "multi-line-summary-second-line",
+    # formatter-managed
+    "missing-trailing-comma",
+    "single-line-implicit-string-concatenation",
+    # allow bare TODOs
+    "missing-todo-author",
+    "missing-todo-link",
+    "line-contains-todo",
+    # arg count handled by pylint max-args
+    "too-many-arguments",
+    # scheme validated for ozon.ru URLs
+    "suspicious-url-open-usage",
+    # inline exception messages ok here
+    "raise-vanilla-args",
+    "raw-string-in-exception",
+    "f-string-in-exception",
+    # no per-file copyright header (see LICENSE)
+    "missing-copyright-notice",
+    # not every symbol needs a docstring
+    "undocumented-public-module",
+    "undocumented-public-class",
+    "undocumented-public-method",
+    "undocumented-public-function",
+    "undocumented-public-package",
+    "undocumented-magic-method",
+    "undocumented-public-init",
+    # docstring summary/section formatting
+    "missing-blank-line-after-summary",
+    "non-imperative-mood",
+    "docstring-missing-returns",
+    "docstring-missing-exception",
+    # Ozon widget JSON is genuinely `Any`
+    "any-type",
+    # intentional Cyrillic in strings/docstrings
+    "ambiguous-unicode-character-string",
+    "ambiguous-unicode-character-docstring",
+    "ambiguous-unicode-character-comment",
+    # pydantic manages mutable model defaults safely
+    "mutable-class-default",
+    # parsing offsets read fine as literals
+    "magic-value-comparison",
+    # date.today() drives current-year inference
+    "call-date-today",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# private-member-access / import-private-name: tests exercise internals on purpose.
+# no-self-use: test doubles override methods that do not need self.
+# unused-function-argument: a fixture is requested by naming it, used or not.
+# unused-method-argument: the session stand-in mirrors the real signatures.
+"tests/**" = [
+    "assert",
+    "implicit-namespace-package",
+    "private-member-access",
+    "import-private-name",
+    "no-self-use",
+    "unused-function-argument",
+    "unused-method-argument",
+    "pytest-useless-yield-fixture",
+]
+# Boolean positional arguments: MCP tools receive flat JSON arguments, so a
+# boolean parameter cannot be made keyword-only.
+"src/ozon_mcp/tools/*.py" = ["boolean-type-hint-positional-argument", "boolean-default-value-positional-argument"]
+# Same reason: the checkout service mirrors the tool signature.
+"src/ozon_mcp/services/checkout.py" = ["boolean-type-hint-positional-argument"]
+# Same reason: cancel_order mirrors the tool signature.
+"src/ozon_mcp/services/orders.py" = ["boolean-type-hint-positional-argument", "boolean-default-value-positional-argument"]
+# Binding all interfaces is the point: the container's port mapping decides what
+# is actually reachable.
+"src/ozon_mcp/settings.py" = ["hardcoded-bind-all-interfaces"]
+# blind-except: any upstream failure is retried the same way, so the exception
+# type carries no decision. no-self-use: _sleep_before_retry is the seam the
+# transport tests replace, so it stays an instance method.
+"src/ozon_mcp/session/transport.py" = ["blind-except", "no-self-use"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
+[tool.ruff.lint.pylint]
+max-args = 7
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ty.rules]
+all = "error"
+# FastMCP's `@mcp.tool()` decorator is untyped, so every tool would otherwise
+# be flagged; the tools are thin and covered by their own signatures.
+dynamic-function-decorator-return = "ignore"
+
+[tool.ty.src]
+include = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["tests"]
+addopts = "--cov=src/ozon_mcp --cov-branch --cov-report=term-missing:skip-covered --cov-fail-under=67"
+
+[tool.coverage.run]
+branch = true
+source = ["src/ozon_mcp"]
+
+[tool.coverage.report]
+# Lines that only run with a real browser or a real process exit are not worth
+# faking; everything reachable from a scripted session is.
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "def __repr__",
+]

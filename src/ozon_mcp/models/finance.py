@@ -1,0 +1,45 @@
+"""Finance DTOs: card balance, points, seller bonuses."""
+
+from pydantic import Field, field_validator
+
+from ozon_mcp.models.base import OzonModel
+
+
+class Finances(OzonModel):
+    ozon_card_balance: str | None = None
+    points: str | None = None
+
+
+class PointType(OzonModel):
+    """One point kind (Баллы Ozon / Мили / ВАУ-баллы / Звёзды)."""
+
+    type: str | None = None
+    name: str | None = None
+    amount: str | None = None
+
+
+class SellerBonus(OzonModel):
+    """Bonus points a particular store granted.
+
+    Ozon sends the amount as a number here and as a formatted string elsewhere,
+    so it is coerced to text rather than rejected.
+    """
+
+    seller: str
+    amount: str | None = None
+
+    @field_validator("amount", mode="before")
+    @classmethod
+    def _as_text(cls, value: object) -> object:
+        return str(value) if isinstance(value, (int, float)) else value
+
+
+class SellerBonuses(OzonModel):
+    total: int | None = None
+    items: list[SellerBonus] = Field(default_factory=list)
+
+
+class Points(OzonModel):
+    by_type: list[PointType] = Field(default_factory=list)
+    burning: list[str] = Field(default_factory=list)
+    seller_bonuses: SellerBonuses = SellerBonuses()

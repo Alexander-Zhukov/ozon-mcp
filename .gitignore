@@ -1,0 +1,20 @@
+# live account session — SECRET, never commit
+data/
+state.json
+*.state.json
+
+# internal reverse-engineering notes and scratch — kept locally, not published
+doc/
+poc/
+
+# env / secrets
+.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.ruff_cache/
+.pytest_cache/
+dist/
+.coverage
