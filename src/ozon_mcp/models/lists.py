@@ -8,9 +8,9 @@ from ozon_mcp.models.base import OzonModel
 class ListRef(OzonModel):
     """A collection (подборка) or wishlist (вишлист).
 
-    ``list_id`` is only known when the list is read in the context of a product,
-    because Ozon exposes ids on the membership modal rather than the lists page;
-    it is what ``set_list_membership`` needs.
+    ``list_id`` is what ``set_list_membership`` needs. It comes from the link a
+    list card carries, so the lists page supplies it too — reading a list in the
+    context of a product is no longer the only way to learn an id.
     """
 
     name: str | None = None

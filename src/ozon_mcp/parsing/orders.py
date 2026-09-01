@@ -129,12 +129,6 @@ def order_numbers_from_link(link: str | None) -> list[str]:
 
 _PRODUCT_LINK_RE = re.compile(r"/product/(?:[a-z0-9\-]+-)?(\d{6,})")
 
-# Phrases the order page shows next to a product that are not its name.
-_NOT_A_TITLE_RE = re.compile(
-    r"^(Причина отмены|Можно забирать|В службе доставки|Заказ (от|покинул)|Доставим|Отменён|Из пункта выдачи|Доставка)",
-    re.IGNORECASE,
-)
-
 
 def _atom(value: Any) -> str | None:
     """Text of a value that may be a plain string or a ``{"text": …}`` atom."""

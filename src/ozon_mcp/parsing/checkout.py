@@ -26,14 +26,16 @@ from ozon_mcp.models.checkout import (
     Totals,
 )
 from ozon_mcp.parsing.common import PRICE_RE, find_all, layout_widgets, walk, widget, widgets_all
-from ozon_mcp.utils.money import format_money, to_kopecks
+from ozon_mcp.utils.money import KOPECKS, format_money, to_kopecks
 
 _PAYMENT_TYPE_RE = re.compile(r"payment_type=(\d+)")
 _POINTS_RE = re.compile(r"points_applied=([\d.]+)")
 _DIGITS_RE = re.compile(r"\d+")
 _TAG_RE = re.compile(r"<[^>]+>")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
-_RECIPIENT_RE = re.compile(r"^[А-ЯЁ][а-яё]+ [А-ЯЁ][а-яё]+\s+\d{6,}$")
+_RECIPIENT_ACTION = "editAddressAndRecipient"
+# How Ozon names instalments among the payment methods it declares.
+_INSTALMENT_KIND = "OzonCredit"
 _SPLIT_KEY_RE = re.compile(r"split_key=([A-Za-z0-9\-]+)")
 
 
@@ -101,13 +103,21 @@ def parse_payment_options(state: Any) -> list[PaymentOption]:
     return options
 
 
-def _payment_note(state: Any, needle: str) -> str | None:
-    """Ozon's own wording for a payment condition, e.g. pay-on-delivery."""
-    texts: list[str] = [t for t in find_all(state, "text") if isinstance(t, str)]
-    for index, text in enumerate(texts):
-        if needle.lower() in text.lower():
-            tail = " ".join(texts[index : index + 3])
-            return " ".join(tail.split())
+def _payment_note(state: Any, kind: str) -> str | None:
+    """Ozon's own wording for one payment method, e.g. the instalment offer.
+
+    Anchored on the method's declared kind (``automatizationDescription``)
+    rather than on a word in the page text: the old read took the matching text
+    plus the next two, whatever those happened to be, so a layout change moved
+    the answer without breaking anything visibly.
+    """
+    entries = state.get("payments") if isinstance(state, dict) else None
+    for entry in entries or []:
+        if not isinstance(entry, dict) or entry.get("automatizationDescription") != kind:
+            continue
+        promote = entry.get("promoteLabel") if isinstance(entry.get("promoteLabel"), dict) else {}
+        parts = [_plain(_text(entry.get("title"))), _plain(_text(promote))]
+        return " ".join(part for part in parts if part) or None
     return None
 
 
@@ -180,14 +190,23 @@ def parse_pay_after_receipt(state: Any, texts: dict[str, str] | None = None) -> 
 
 
 def _point_number(entry: dict[str, Any]) -> str | None:
-    """The pickup point's public number; Ozon exposes it as copy-to-clipboard."""
-    for node in walk(entry):
+    """The pickup point's public number.
+
+    ``numberPVZ`` holds it twice: rendered as «№ 144-94-60» and plain in the
+    copy-to-clipboard action. The plain one is what a person types back, so it
+    is preferred; only a pickup point has this block at all, which is what tells
+    a point apart from a courier address.
+    """
+    block = entry.get("numberPVZ") if isinstance(entry.get("numberPVZ"), dict) else None
+    if block is None:
+        return None
+    for node in walk(block):
         action = node.get("action")
         if isinstance(action, dict) and action.get("id") == "copyText":
             value = (action.get("params") or {}).get("clipboardText")
             if value:
                 return str(value)
-    return None
+    return _plain(_text(block.get("number")))
 
 
 def _apply_link(entry: dict[str, Any]) -> str | None:
@@ -209,18 +228,27 @@ def parse_pickup_points(state: Any) -> list[PickupPoint]:
     for entry in (state.get("addresses") if isinstance(state, dict) else None) or []:
         if not isinstance(entry, dict):
             continue
-        texts: list[str] = [t.strip() for t in find_all(entry, "text") if isinstance(t, str) and t.strip()]
+        # Every entry states its own lines in order: the address first, then
+        # either the storage term (a pickup point) or the flat/floor detail and
+        # the recipient (a courier address). Reading them positionally is what
+        # avoids guessing an address by "the first text longer than 12 chars".
+        lines = [line for line in (_plain(_text(element)) for element in entry.get("elements") or []) if line]
+        number = _point_number(entry)
         apply_link = _apply_link(entry)
+        rest = lines[1:]
+        notes = [note for note in (_plain(_text(element)) for element in entry.get("bottomElements") or []) if note]
         points.append(
             PickupPoint(
                 address_book_id=entry.get("addressBookId"),
-                title=_text(entry.get("title")) or (texts[0] if texts else None),
-                address=next((t for t in texts[1:] if len(t) > 12 and "хранени" not in t.lower()), None),
-                number=_point_number(entry),
-                storage=next((t for t in texts if "хранени" in t.lower()), None),
+                title=_plain(_text(entry.get("title"))),
+                # A courier address spreads over its lines; a point is one line
+                # plus how long it keeps the parcel.
+                address=", ".join(lines if number is None else lines[:1]) or None,
+                number=number,
+                storage=rest[0] if number is not None and rest else None,
                 selected=bool(entry.get("isSelected")),
                 available=bool(entry.get("isEnabled")) and apply_link is not None,
-                note=next((t for t in texts if "не можем" in t.lower()), None),
+                note=" ".join(notes) or None,
             )
         )
     return points
@@ -254,9 +282,28 @@ def parse_delivery(state: Any) -> Delivery:
         mode=mode or next((t for t in texts if t.strip() in {"Самовывоз", "Курьером"}), None),
         address=", ".join(filter(None, (label, street))) or None,
         storage=next((line for line in lines if "хранени" in line.lower()), None),
-        recipient=next((t for t in texts if _RECIPIENT_RE.match(t.strip())), None),
+        recipient=_recipient(state),
         change_link=change_link,
     )
+
+
+def _recipient(state: Any) -> str | None:
+    """Who the order is addressed to, from the row that edits exactly that.
+
+    Ozon gives the row its own action (``/modal/editAddressAndRecipient``), so
+    the name is read from there instead of being recognised by shape — the old
+    "two capitalised words then digits" pattern missed a single-word name, a
+    double-barrelled surname and anything not in Cyrillic.
+    """
+    for node in walk(state):
+        if _RECIPIENT_ACTION not in _link(node):
+            continue
+        for inner in walk(node):
+            center = inner.get("centerBlock")
+            title = _text((center or {}).get("title")) if isinstance(center, dict) else None
+            if title:
+                return _plain(title)
+    return None
 
 
 def parse_deliveries(data: dict[str, Any]) -> list[Delivery]:
@@ -455,6 +502,11 @@ def parse_totals(state: Any) -> Totals:
         if title and "всего заказа" in title.lower():
             order_total = price
     today = _plain(_text(footer.get("price")))
+    # The same figure is stated as a number beside the rendered rows; preferring
+    # it keeps the order total out of a caption Ozon is free to reword.
+    declared = state.get("totalPrice") if isinstance(state, dict) else None
+    if isinstance(declared, (int, float)) and not isinstance(declared, bool):
+        order_total = format_money(round(declared * KOPECKS))
     return Totals(
         rows=rows,
         total=today,
@@ -524,7 +576,7 @@ def parse_checkout(data: dict[str, Any]) -> Checkout:
         available=True,
         payment_options=payment_options,
         pay_after_receipt=pay_after_receipt,
-        installment=_payment_note(payment, "Рассрочка"),
+        installment=_payment_note(payment, _INSTALMENT_KIND),
         deliveries=deliveries,
         shipments=parse_shipments(data),
         points=parse_points(widget(data, "premiumPointsToggle")),
