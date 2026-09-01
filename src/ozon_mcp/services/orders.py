@@ -13,6 +13,7 @@ from ozon_mcp.models.checkout import CancelReason, OrderCancelled, PaymentReques
 from ozon_mcp.parsing.common import find_all, walk, widget
 from ozon_mcp.parsing.orders import parse_orders
 from ozon_mcp.settings import get_settings
+from ozon_mcp.utils.money import format_money, to_kopecks
 
 if TYPE_CHECKING:
     from ozon_mcp.models.orders import Order
@@ -358,16 +359,13 @@ _BANK_HOST: Final = "finance.ozon.ru"
 
 
 _SHORTFALL_RE: Final = re.compile(r"не хватает\s+([\d\s\u202f\u00a0,.]+₽)")
-_KOPECKS: Final = 100
 
 
 def _money(kopecks: str | None) -> str | None:
     """Ozon states amounts in kopecks on this action; people read roubles."""
     if not kopecks or not str(kopecks).isdigit():
         return None
-    value = int(kopecks) / _KOPECKS
-    whole = f"{int(value):,}".replace(",", " ")
-    return f"{whole} ₽" if value == int(value) else f"{whole},{round(value % 1 * _KOPECKS):02d} ₽"
+    return format_money(int(kopecks))
 
 
 def pay_order(order: str) -> PaymentRequested:
@@ -440,14 +438,6 @@ def pay_order(order: str) -> PaymentRequested:
     )
 
 
-def _kopecks(text: str | None) -> int | None:
-    digits = re.sub(r"[^\d,]", "", (text or "").replace("\u202f", "").replace("\u00a0", ""))
-    if not digits:
-        return None
-    whole, _, cents = digits.partition(",")
-    return int(whole or 0) * _KOPECKS + int((cents + "00")[:2])
-
-
 def _amount_due(page: dict[str, Any]) -> str | None:
     """The "К оплате" figure Ozon shows on the order itself."""
     total = widget(page, "orderDoneTotal") or {}
@@ -463,10 +453,10 @@ def _gap(amount: str | None) -> str | None:
     """What the Ozon Card balance is short of ``amount``, if anything."""
     from ozon_mcp.services.finance import get_finances  # ruff: ignore[import-outside-top-level] - avoids a cycle
 
-    due = _kopecks(amount)
+    due = to_kopecks(amount)
     if due is None:
         return None
-    balance = _kopecks(get_finances().ozon_card_balance)
+    balance = to_kopecks(get_finances().ozon_card_balance)
     if balance is None or balance >= due:
         return None
     return _money(str(due - balance))

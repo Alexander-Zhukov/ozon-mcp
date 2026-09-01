@@ -230,17 +230,29 @@ async def check_favorite_price_drops() -> PriceDiff:
 
 # ── checkout ─────────────────────────────────────────────────────────────────
 @mcp.tool()
-async def get_checkout() -> Checkout:
+async def get_checkout(shipment_items: bool | None = None) -> Checkout:
     """The order being formed from the selected cart items, with everything that
     can be changed: payment methods (each with its payment_type), the
     pay-on-delivery switch, one entry per destination in `deliveries` (each with
-    its shipments in split_keys and its selectable pickup_points), per-shipment
-    delivery dates, points choices and the money breakdown.
+    its shipments in split_keys and its selectable pickup_points), the
+    `shipments` with their delivery dates, points choices and the money
+    breakdown — totals.total is what Ozon charges today (0 ₽ on a fully
+    deferred order) and totals.order_total is what the order costs.
+
+    Pay-on-delivery does not always cover the whole order. pay_after_receipt
+    .scope is one of "full", "partial" (some items must be paid up front:
+    prepayment_amount now, post_payment_amount on receipt) or "none", and .note
+    states it in words. On a partial order the `shipments` are loaded with their
+    items, and each shipment's `prepaid` says whether it is the part that has to
+    be paid now — null means Ozon did not say and the amounts do not settle it.
+    shipment_items forces that loading on (true) or off (false); by default it
+    happens only when scope is "partial".
+
     Forms the checkout itself if Ozon has not yet. If it reports
     available=false, `reason` says what to fix — usually: select cart items.
     Change it with configure_checkout, submit with place_order.
     """
-    return await run_blocking(checkout.get_checkout)
+    return await run_blocking(lambda: checkout.get_checkout(shipment_items))
 
 
 @mcp.tool()

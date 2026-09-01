@@ -48,7 +48,7 @@ a persistent browser profile seeded by one interactive login.
 | `get_lists` | Collections and wishlists; with a sku, also their ids |
 | `set_list_membership` | Put a product in a list or take it out (gated) |
 | `check_favorite_price_drops` | Price diff for favorites since the previous call |
-| `get_checkout` | The order being formed: payment, pay-on-delivery, destinations, pickup points, dates, points, totals |
+| `get_checkout` | The order being formed: payment, pay-on-delivery (and how much of the order it covers), destinations, pickup points, shipments with their items, points, totals |
 | `configure_checkout` | Set payment, points, pay-on-delivery and pickup point in one call |
 | `pay_order` | Charge an order left unpaid; returns the page where Ozon completes it |
 | `place_order` | **Spends money** — submit, waiting until the order exists (gated by `OZON_ENABLE_ORDERS`) |
@@ -61,6 +61,21 @@ a persistent browser profile seeded by one interactive login.
 
 Mutation tools are **disabled by default** — set `OZON_ENABLE_WRITES=1` to allow
 them.
+
+### Pay-on-delivery is not all-or-nothing
+
+Ozon defers payment **per shipment**, so an order can be part deferred and part
+prepaid — an imported item usually has to be paid up front while the rest waits
+until pickup. `pay_after_receipt.scope` names the case (`full` / `partial` /
+`none`), and on a partial order the amounts are split out: `prepayment_amount`
+now, `post_payment_amount` on receipt, with `note` saying it in one sentence.
+
+Which *items* are the prepaid ones is not something Ozon publishes — not on the
+checkout page, not in the cart, not in its own pay-on-delivery help modal. It
+does publish one prepayment figure and it decides per shipment, so the figure is
+matched against the shipments' own sums: when exactly one combination accounts
+for it, those shipments get `prepaid: true` and the rest `false`. When the
+amounts leave it ambiguous, `prepaid` stays `null` rather than naming a guess.
 
 ## Session and state
 
