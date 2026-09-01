@@ -290,9 +290,12 @@ async def select_cart_items(
 
 # ── favorites, collections, wishlists ────────────────────────────────────────
 @mcp.tool()
-async def list_favorites(page: Page = 1) -> list[Tile]:
-    """Favorites as product tiles: sku, title, price, old price, url."""
-    return await run_blocking(lambda: favorites.list_favorites(page))
+async def list_favorites(limit: Limit = 100) -> list[Tile]:
+    """Favorites as product tiles: sku, title, price, old price, url.
+    Paginated through for you — `limit` caps how many come back, there is no
+    page to ask for.
+    """
+    return await run_blocking(lambda: favorites.list_favorites(limit))
 
 
 @mcp.tool()
@@ -312,14 +315,38 @@ async def set_favorite(
 async def get_lists(
     sku: Annotated[
         str | None,
-        Field(description="A product SKU: returns the same lists, but flagged by whether that product is in them."),
+        Field(description="A product SKU: the same lists, each with `contains` saying whether it holds that product."),
     ] = None,
 ) -> list[ListRef]:
-    """Collections (подборки) and wishlists (вишлисты), each with its kind,
-    item count and list_id. Pass a sku to see them from that product's point of
-    view. list_id is what set_list_membership() takes.
+    """The account's wishlists (вишлисты), each with its size and list_id — which
+    is what set_list_membership() and delete_list() take. With a sku, every list
+    also carries `contains`, so a product already in a list is not added twice.
+    Ozon's «Подборки» are a different thing, kept elsewhere and not exposed.
     """
     return await run_blocking(lambda: favorites.get_lists(sku))
+
+
+@mcp.tool()
+async def create_list(
+    name: Annotated[str, Field(min_length=1, description="Name for the new wishlist, as the user would read it.")],
+) -> ListRef:
+    """[GATED by writes_enabled] Create an empty wishlist and return it with its
+    list_id, ready for set_list_membership(). An empty name is refused by Ozon.
+    Wishlists are the only list this account can create — «Подборки» are not
+    made this way.
+    """
+    return await run_blocking(lambda: favorites.create_list(name))
+
+
+@mcp.tool()
+async def delete_list(
+    list_id: Annotated[int, Field(description="The list to delete, from get_lists()[].list_id.")],
+) -> WriteResult:
+    """[GATED by writes_enabled] Delete a wishlist. The products in it are not
+    deleted — they stay in favorites and in any other list. Not undoable: the
+    list itself is gone, so confirm with the user first.
+    """
+    return await run_blocking(lambda: favorites.delete_list(list_id))
 
 
 @mcp.tool()

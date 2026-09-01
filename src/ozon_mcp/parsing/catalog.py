@@ -18,26 +18,92 @@ from ozon_mcp.models.catalog import (
     Variant,
     VariantOption,
 )
-from ozon_mcp.parsing.common import IMAGE_RE, PRICE_RE, find_all, prices, state_by_layout, widget, widget_with
+from ozon_mcp.parsing.common import (
+    IMAGE_RE,
+    PRICE_RE,
+    find_all,
+    prices,
+    state_by_layout,
+    walk,
+    widget,
+    widget_with,
+)
+
+
+def _tile_title(item: dict[str, Any]) -> str | None:
+    """The product name, from the atom Ozon marks as the name.
+
+    A tile also carries badges, stock lines and seller labels; picking the
+    longest string instead — which is what this did — hands back "4 577 шт
+    осталось" for a product whose name is shorter than its stock notice.
+    """
+    for atom in walk(item):
+        if atom.get("id") == "name" or (atom.get("testInfo") or {}).get("automatizationId") == "tile-name":
+            text = _atom_text(atom)
+            if text:
+                return text
+    texts = [text for text in find_all(item, "text") if isinstance(text, str)]
+    return max((text for text in texts if len(text) > 8), key=len, default=None)
+
+
+def _atom_text(atom: dict[str, Any]) -> str | None:
+    candidates: list[Any] = [atom.get("text"), *(value for value in atom.values() if isinstance(value, dict))]
+    for value in candidates:
+        if isinstance(value, str):
+            return str(value).strip() or None
+        if isinstance(value, dict):
+            nested = value.get("text")
+            if isinstance(nested, str) and str(nested).strip():
+                return str(nested).strip()
+    return None
+
+
+def _tile_prices(item: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Current and pre-discount price, told apart by the style Ozon gives them.
+
+    ``priceV2`` labels them ``PRICE`` and ``ORIGINAL_PRICE``; taking the first
+    two money-looking strings in the tile instead depends on their order in the
+    payload, which is not the caller's business to rely on.
+    """
+    for node in walk(item):
+        entries = node.get("price") if isinstance(node.get("price"), list) else None
+        if not entries:
+            continue
+        current = next((e.get("text") for e in entries if isinstance(e, dict) and e.get("textStyle") == "PRICE"), None)
+        original = next(
+            (e.get("text") for e in entries if isinstance(e, dict) and e.get("textStyle") == "ORIGINAL_PRICE"), None
+        )
+        if current or original:
+            first = str(current).strip() if isinstance(current, str) else None
+            second = str(original).strip() if isinstance(original, str) else None
+            return (first or None, second or None)
+    found: list[str] = [str(match) for match in PRICE_RE.findall(json.dumps(item, ensure_ascii=False))]
+    return (found[0] if found else None, found[1] if len(found) > 1 else None)
 
 
 def parse_tiles(data: dict[str, Any]) -> list[Tile]:
-    """Product tiles from a tileGridDesktop / search grid."""
+    """Product tiles from a tileGridDesktop / search grid.
+
+    A tile states its own sku, and its name and prices sit in atoms Ozon labels
+    — so all three are read from those rather than recognised by shape.
+    """
     state = widget(data, "tileGridDesktop") or widget(data, "searchResultsV2") or {}
     tiles: list[Tile] = []
     for item in (state.get("items") if isinstance(state, dict) else None) or []:
-        blob = json.dumps(item, ensure_ascii=False)
-        sku_match = re.search(r"/product/[a-z0-9\-]+-(\d{6,})/", blob)
-        sku = sku_match.group(1) if sku_match else None
-        texts = [t for t in find_all(item, "text") if isinstance(t, str)]
-        title = max((t for t in texts if len(t) > 8), key=len, default=None)
-        found = PRICE_RE.findall(blob)
+        if not isinstance(item, dict):
+            continue
+        declared = item.get("sku") or item.get("skuId") or item.get("id")
+        sku = str(declared) if declared and str(declared).isdigit() else None
+        if sku is None:
+            found = re.search(r"/product/[a-z0-9\-]+-(\d{6,})/", json.dumps(item, ensure_ascii=False))
+            sku = found.group(1) if found else None
+        price, price_old = _tile_prices(item)
         tiles.append(
             Tile(
                 sku=sku,
-                title=title,
-                price=found[0] if found else None,
-                price_old=found[1] if len(found) > 1 else None,
+                title=_tile_title(item),
+                price=price,
+                price_old=price_old,
                 url=f"https://www.ozon.ru/product/{sku}/" if sku else None,
             )
         )

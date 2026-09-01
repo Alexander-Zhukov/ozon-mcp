@@ -8,9 +8,12 @@ from ozon_mcp.models.base import OzonModel
 class ListRef(OzonModel):
     """A collection (подборка) or wishlist (вишлист).
 
-    ``list_id`` is what ``set_list_membership`` needs. It comes from the link a
-    list card carries, so the lists page supplies it too — reading a list in the
-    context of a product is no longer the only way to learn an id.
+    ``list_id`` is what ``set_list_membership`` and ``delete_list`` need; it
+    comes from the link a list card carries, so the lists page supplies it.
+
+    ``contains`` is only set when the lists were read for a particular product,
+    and says whether that product is already in the list — which decides whether
+    adding it is the right call at all.
     """
 
     name: str | None = None
@@ -18,13 +21,7 @@ class ListRef(OzonModel):
     items: int | None = None
     saves: int | None = None
     list_id: int | None = None
-
-
-class ListId(OzonModel):
-    """A list identified by id, for add_to_list / remove_from_list."""
-
-    id: int
-    name: str | None = None
+    contains: bool | None = None
 
 
 class PriceChange(OzonModel):

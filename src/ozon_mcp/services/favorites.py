@@ -13,13 +13,13 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from ozon_mcp.dependencies import get_session
-from ozon_mcp.errors import WritesDisabledError
+from ozon_mcp.errors import OzonError, WritesDisabledError
 from ozon_mcp.models.common import WriteResult
 from ozon_mcp.models.lists import ListRef
 from ozon_mcp.models.orders import Return
 from ozon_mcp.parsing import catalog as catalog_parse
-from ozon_mcp.parsing.common import walk, widget
-from ozon_mcp.parsing.lists import parse_list_page, parse_lists
+from ozon_mcp.parsing.common import find_all, walk, widget
+from ozon_mcp.parsing.lists import parse_list_membership, parse_wishlists
 from ozon_mcp.services import monitoring
 from ozon_mcp.settings import get_settings
 
@@ -28,6 +28,8 @@ _RETURN_LINK = "/my/returns/"
 # Ozon reports neither success nor refusal for these actions, so the honest
 # answer names the read that settles it rather than claiming an outcome.
 _ACCEPTED = "Ozon accepted the change and reports no outcome for it; confirm with {check} if it matters"
+_CREATE_LIST_ACTION = "favoriteCreateList"
+_DELETE_LIST_ACTION = "favoriteDeleteList"
 
 if TYPE_CHECKING:
     from ozon_mcp.models.catalog import Tile
@@ -66,22 +68,60 @@ def check_favorite_price_drops() -> PriceDiff:
 
 
 def get_lists(sku: str | None = None) -> list[ListRef]:
-    """Collections and wishlists in one answer.
+    """The account's wishlists, with their ids and sizes.
 
-    Without ``sku`` this is the lists page: names, kinds and counts. With a
-    ``sku`` it is the membership modal for that product, which is the only place
-    Ozon exposes list **ids** — and an id is what changing membership needs.
+    The wishlists page is always the source of the list itself, because it is
+    the one place that names every list with its id — the membership modal drops
+    the id of any list the product is already in. With a ``sku`` the modal is
+    read as well, for the one thing it does know: which lists hold that product.
+
+    Ozon's «Подборки» are a different entity, kept on ``/selections/list`` and
+    not created by these actions; they are deliberately not mixed in here.
     """
     session = get_session()
+    lists = parse_wishlists(session.fetch(_LISTS_PATH))
     if sku is None:
-        page = session.fetch(_LISTS_PATH)
-        collections = [ref.model_copy(update={"kind": "collection"}) for ref in parse_list_page(page, wishlists=False)]
-        wishlists = [ref.model_copy(update={"kind": "wishlist"}) for ref in parse_list_page(page, wishlists=True)]
-        return collections + wishlists
+        return lists
     sku_match = re.search(r"(\d{6,})", str(sku))
     identifier = sku_match.group(1) if sku_match else sku
-    entries = parse_lists(session.fetch(f"/modal/favoritesListsSelect?sku={identifier}", backend="entrypoint"))
-    return [ListRef(name=entry.name, list_id=entry.id) for entry in entries]
+    modal = session.fetch(f"/modal/favoritesListsSelect?sku={identifier}", backend="entrypoint")
+    membership = parse_list_membership(modal)
+    return [ref.model_copy(update={"contains": membership.get(ref.name or "")}) for ref in lists]
+
+
+def create_list(name: str) -> ListRef:
+    """Create an empty wishlist and return it with its id.
+
+    Only wishlists: the action takes an ``isWishlist`` flag, but passing false
+    creates a wishlist all the same — «Подборки» are made elsewhere — so the
+    flag is not offered rather than promising a kind Ozon will not produce.
+
+    Ozon does report a refusal here — an empty name comes back as «Пустое
+    название вишлиста» — so a failure raises instead of returning a list that
+    does not exist.
+    """
+    _require_writes()
+    response = get_session().action(_CREATE_LIST_ACTION, {"title": name, "isWishlist": True})
+    complaint = response.get("errorForUser") or response.get("error") if isinstance(response, dict) else None
+    if complaint or not isinstance(response, dict) or not response.get("id"):
+        msg = f"Ozon refused to create the list: {complaint or 'no id came back'}"
+        raise OzonError(msg)
+    return ListRef(name=str(response.get("title") or name), kind="wishlist", items=0, list_id=int(response["id"]))
+
+
+def delete_list(list_id: int) -> WriteResult:
+    """Delete a wishlist. The products in it are not deleted.
+
+    Ozon confirms this one in words ("Вишлист удалён из избранного"), so its own
+    wording is passed back rather than an assumption.
+    """
+    _require_writes()
+    response = get_session().action(_DELETE_LIST_ACTION, {"ids": [int(list_id)]})
+    complaint = response.get("errorForUser") or response.get("error") if isinstance(response, dict) else None
+    if complaint:
+        return WriteResult(ok=False, detail=str(complaint))
+    said = [text for text in find_all(response, "title") if isinstance(text, str) and text.strip()]
+    return WriteResult(detail=said[0] if said else None)
 
 
 def set_list_membership(sku: str, list_id: int, *, add: bool = True) -> WriteResult:

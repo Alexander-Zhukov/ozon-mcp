@@ -43,9 +43,10 @@ a persistent browser profile seeded by one interactive login.
 | `get_cart` | Whole cart: items, quantities, ticks, Ozon's group headings |
 | `set_cart_quantity` | Set quantity; 0 removes (gated) |
 | `select_cart_items` | Tick what makes up the order — only / add / remove / all / none (gated) |
-| `list_favorites` | Favorites as product tiles |
+| `list_favorites` | Favorites as product tiles (paginated through) |
 | `set_favorite` | Add to / remove from favorites (gated) |
-| `get_lists` | Collections and wishlists; with a sku, also their ids |
+| `get_lists` | Wishlists with their ids and sizes; with a sku, whether each holds it |
+| `create_list` / `delete_list` | Make a wishlist or delete one (gated) |
 | `set_list_membership` | Put a product in a list or take it out (gated) |
 | `check_favorite_price_drops` | Price diff for favorites since the previous call |
 | `get_checkout` | The order being formed: payment, pay-on-delivery (and how much of the order it covers), destinations, pickup points, shipments with their items, points, totals |
