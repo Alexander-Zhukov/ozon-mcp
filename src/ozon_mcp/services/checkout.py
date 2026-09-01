@@ -24,8 +24,10 @@ from ozon_mcp.errors import OrdersDisabledError, OzonError, TotalMismatchError
 from ozon_mcp.parsing.checkout import (
     parse_checkout,
     parse_pickup_points,
+    parse_prepayment_split,
     parse_shipment_items,
     pickup_apply_link,
+    prepayment_link,
     shipment_detail_link,
     shipment_total,
 )
@@ -92,15 +94,51 @@ def _fill_shipments(checkout: Checkout, data: dict[str, Any]) -> None:
         shipment.total = shipment_total(shipment.items)
 
 
-def _attribute_prepayment(checkout: Checkout) -> None:
-    """Work out which shipments the prepayment is for.
+def _read_prepayment_split(checkout: Checkout, data: dict[str, Any]) -> None:
+    """Ask Ozon which items it charges now, instead of inferring it.
 
-    Ozon states one prepayment figure for the order and never says which part of
-    it is not eligible for pay-on-delivery. Eligibility is decided per shipment,
-    though, so the figure has to be some combination of shipment totals: when
-    exactly one combination adds up to it, those shipments are the prepaid ones
-    and the rest are deferred. When several combinations fit, the answer is left
-    unset — naming the wrong items is worse than admitting Ozon did not say.
+    The «Есть предоплата N ₽» row is a control: behind it Ozon lists the lines
+    charged now and the lines charged on receipt. That is the authoritative
+    answer, and it exists exactly when the order is split — so it is followed
+    whenever the row offers a link.
+    """
+    link = prepayment_link(widget(data, "paymentInfoV2"))
+    if link is None:
+        return
+    now, later = parse_prepayment_split(get_session().fetch(link, backend="entrypoint"))
+    checkout.pay_after_receipt.pay_now_items = now
+    checkout.pay_after_receipt.pay_on_receipt_items = later
+
+
+def _attribute_shipments(checkout: Checkout) -> None:
+    """Mark each shipment as prepaid or not, from the items Ozon named.
+
+    A shipment holding items from both sides is left unset rather than forced
+    into one: the split is per item, and Ozon groups the modal by payment, not
+    by parcel.
+    """
+    prepaid = {item.title for item in checkout.pay_after_receipt.pay_now_items if item.title}
+    deferred = {item.title for item in checkout.pay_after_receipt.pay_on_receipt_items if item.title}
+    if not prepaid and not deferred:
+        return
+    for shipment in checkout.shipments:
+        titles = {item.title for item in shipment.items if item.title}
+        if not titles:
+            continue
+        if titles <= prepaid:
+            shipment.prepaid = True
+        elif titles <= deferred:
+            shipment.prepaid = False
+
+
+def _attribute_prepayment(checkout: Checkout) -> None:
+    """Work out which shipments the prepayment is for, when Ozon named no items.
+
+    Fallback for a page that offers no breakdown: eligibility is decided per
+    shipment, so the one figure Ozon does print has to be some combination of
+    shipment totals. When exactly one combination adds up to it, those shipments
+    are the prepaid ones; when several fit, the answer is left unset, because
+    naming the wrong items is worse than admitting nothing was published.
     """
     prepayment = to_kopecks(checkout.pay_after_receipt.prepayment_amount)
     shipments = checkout.shipments
@@ -137,10 +175,15 @@ def _read(
         for delivery in checkout.deliveries:
             state = _address_book(delivery.change_link)
             delivery.pickup_points = parse_pickup_points(state) if state is not None else []
+    if checkout.available:
+        _read_prepayment_split(checkout, data)
     partial = checkout.pay_after_receipt.scope == "partial"
     if checkout.available and (partial if with_shipments is None else with_shipments):
         _fill_shipments(checkout, data)
-        _attribute_prepayment(checkout)
+        if checkout.pay_after_receipt.pay_now_items:
+            _attribute_shipments(checkout)
+        else:
+            _attribute_prepayment(checkout)
     return checkout
 
 

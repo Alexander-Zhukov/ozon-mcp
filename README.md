@@ -70,12 +70,13 @@ until pickup. `pay_after_receipt.scope` names the case (`full` / `partial` /
 `none`), and on a partial order the amounts are split out: `prepayment_amount`
 now, `post_payment_amount` on receipt, with `note` saying it in one sentence.
 
-Which *items* are the prepaid ones is not something Ozon publishes — not on the
-checkout page, not in the cart, not in its own pay-on-delivery help modal. It
-does publish one prepayment figure and it decides per shipment, so the figure is
-matched against the shipments' own sums: when exactly one combination accounts
-for it, those shipments get `prepaid: true` and the rest `false`. When the
-amounts leave it ambiguous, `prepaid` stays `null` rather than naming a guess.
+Which *items* fall on which side is Ozon's own answer, not a guess:
+`pay_now_items` and `pay_on_receipt_items` come from the breakdown behind the
+«Есть предоплата N ₽» row — that row is a control, not a caption. Shipments are
+marked `prepaid` from those lists, and a shipment holding items from both sides
+stays `null` rather than being forced into one. If a page ever offers no
+breakdown, the one published figure is matched against the shipments' own sums
+instead, and an ambiguous match stays `null` too.
 
 ## Session and state
 

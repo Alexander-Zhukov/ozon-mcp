@@ -310,37 +310,87 @@ def shipment_detail_link(data: dict[str, Any], split_key: str) -> str | None:
     return None
 
 
-def parse_shipment_items(data: dict[str, Any]) -> list[ShipmentItem]:
-    """Contents of one shipment, from its detail modal.
+def _detail_items(state: Any) -> list[ShipmentItem]:
+    """Lines of one ``splitDetailWebV2`` widget.
 
     ``vertical.splits`` groups the lines by seller; each line states its title
     and variant as two text atoms of ``mainColumn``, its price separately, and
     its quantity in ``sideColumn``.
     """
     items: list[ShipmentItem] = []
-    for state in widgets_all(data, "splitDetailWebV2"):
-        vertical = state.get("vertical") if isinstance(state, dict) else None
-        for group in (vertical or {}).get("splits") or []:
-            if not isinstance(group, dict):
+    vertical = state.get("vertical") if isinstance(state, dict) else None
+    for group in (vertical or {}).get("splits") or []:
+        if not isinstance(group, dict):
+            continue
+        seller = _plain(_text(group.get("title")))
+        for entry in group.get("items") or []:
+            if not isinstance(entry, dict):
                 continue
-            seller = _plain(_text(group.get("title")))
-            for entry in group.get("items") or []:
-                if not isinstance(entry, dict):
-                    continue
-                labels = [_plain(_text(atom.get("textAtom"))) for atom in entry.get("mainColumn") or []]
-                labels = [label for label in labels if label]
-                price = entry.get("price") if isinstance(entry.get("price"), dict) else {}
-                quantity = next((_plain(_text(cell)) for cell in entry.get("sideColumn") or []), None)
-                items.append(
-                    ShipmentItem(
-                        title=labels[0] if labels else None,
-                        variant=labels[1] if len(labels) > 1 else None,
-                        price=_plain(_text(price.get("price")) or price.get("price")),
-                        quantity=quantity,
-                        seller=seller,
-                    )
+            labels = [_plain(_text(atom.get("textAtom"))) for atom in entry.get("mainColumn") or []]
+            labels = [label for label in labels if label]
+            price = entry.get("price") if isinstance(entry.get("price"), dict) else {}
+            quantity = next((_plain(_text(cell)) for cell in entry.get("sideColumn") or []), None)
+            items.append(
+                ShipmentItem(
+                    title=labels[0] if labels else None,
+                    variant=labels[1] if len(labels) > 1 else None,
+                    price=_plain(_text(price.get("price")) or price.get("price")),
+                    quantity=quantity,
+                    seller=seller,
                 )
+            )
     return items
+
+
+def parse_shipment_items(data: dict[str, Any]) -> list[ShipmentItem]:
+    """Contents of one shipment, from its detail modal."""
+    items: list[ShipmentItem] = []
+    for state in widgets_all(data, "splitDetailWebV2"):
+        items += _detail_items(state)
+    return items
+
+
+def prepayment_link(state: Any) -> str | None:
+    """The link behind the «Есть предоплата N ₽» row of the payment block.
+
+    That row is a control, not a caption: it opens Ozon's own breakdown of which
+    items are charged now and which on receipt. The action hangs on the row's
+    chevron rather than on the row, so the whole row is searched — the link is
+    what matters, not which atom Ozon chose to attach it to.
+    """
+    for node in walk(state):
+        center = node.get("centerBlock")
+        title = _text((center or {}).get("title")) if isinstance(center, dict) else None
+        if not title or "предоплата" not in title.lower():
+            continue
+        for inner in walk(node):
+            link = _link(inner)
+            if link:
+                return link
+    return None
+
+
+def parse_prepayment_split(data: dict[str, Any]) -> tuple[list[ShipmentItem], list[ShipmentItem]]:
+    """Ozon's own answer to which items are prepaid, as (charged now, on receipt).
+
+    The modal renders the two groups as two ``splitDetailWebV2`` widgets titled
+    «К оплате сейчас» and «К оплате после получения». Their order is not
+    guaranteed, so they are told apart by title; with exactly two sections and
+    only one of them recognised, the other is the remaining group by elimination.
+    """
+    sections = [
+        (_text(state.get("title")) or "", _detail_items(state)) for state in widgets_all(data, "splitDetailWebV2")
+    ]
+    now = [items for title, items in sections if "сейчас" in title.lower()]
+    later = [items for title, items in sections if "после получения" in title.lower()]
+    if len(sections) == 2 and len(now) + len(later) == 1:
+        unmatched = [
+            items
+            for title, items in sections
+            if "сейчас" not in title.lower() and "после получения" not in title.lower()
+        ]
+        (later if now else now).extend(unmatched)
+    return [item for group in now for item in group], [item for group in later for item in group]
 
 
 def shipment_total(items: list[ShipmentItem]) -> str | None:
