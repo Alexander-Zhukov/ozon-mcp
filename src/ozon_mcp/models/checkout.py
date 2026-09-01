@@ -117,11 +117,19 @@ class Checkout(OzonModel):
 
 
 class OrderPlaced(OzonModel):
-    """Result of a submitted order, once Ozon has actually created it."""
+    """Result of a submitted order, once Ozon has actually created it.
+
+    A card-paid order is created but not yet paid: Ozon then asks for the bank
+    passcode on its own page, which is a person's step by design. ``payment_url``
+    is where that happens and ``awaiting_payment`` says it is still pending —
+    the order exists either way and can be cancelled by number.
+    """
 
     order_number: str | None = None
     total: str | None = None
     link: str | None = None
+    awaiting_payment: bool = False
+    payment_url: str | None = None
 
 
 class CancelReason(OzonModel):

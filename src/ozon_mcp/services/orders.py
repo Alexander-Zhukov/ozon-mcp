@@ -90,6 +90,8 @@ def orders_by_date(date_from: str, date_to: str, max_orders: int = 300) -> list[
 # response carried — which is what the site itself does.
 _CANCEL_MODAL_ACTION: Final = "selectCancelModalRms"
 _CANCEL_ORDER_ACTION: Final = "v2/cancelOrderRms"
+_MODAL_CONSTRUCTOR_ACTION: Final = "v2/openModalConstructorRms"
+_REASONS_MODAL: Final = "/modal/selectCancelReasonRms"
 # Ozon's own wording; the catch-all one is rejected without a comment.
 _NEEDS_COMMENT_REASON: Final = "508"
 
@@ -103,17 +105,57 @@ def _cancel_postings_modal(order: str) -> str:
     return str(link)
 
 
+def _typed(params: dict[str, Any]) -> dict[str, Any]:
+    """Restore the JSON types Ozon flattened into strings.
+
+    An action's params arrive as text ("False", "1634"), but the reason step
+    expects the state it is given to carry real booleans and numbers — handed
+    the flat strings it answers with an empty page and the cancellation stalls
+    with no error to explain it.
+    """
+    typed: dict[str, Any] = {}
+    for key, value in params.items():
+        if isinstance(value, str) and value in {"True", "False"}:
+            typed[key] = value == "True"
+        elif isinstance(value, str) and value.isdigit():
+            typed[key] = int(value)
+        else:
+            typed[key] = value
+    return typed
+
+
 def _reasons_modal(order: str) -> tuple[str, dict[str, Any]]:
-    """Select every parcel, then open the reasons step it unlocks."""
+    """Reach the reasons step, whichever way this order gets there.
+
+    Ozon takes two routes depending on the order's state. A confirmed order goes
+    through a parcel picker first, and the reasons step is unlocked by its
+    button. An order still awaiting payment has no parcels to pick, so the entry
+    action lands on the reasons directly — its parameters then live in the
+    widget's own ``state`` instead of a button.
+    """
     session = get_session()
-    modal = _cancel_postings_modal(order)
-    # The modal is an entrypoint page: posting to composer answers with a page
-    # that has selected nothing, which reads as "nothing cancellable".
-    selected = session.post_page(modal, {"SelectAll": "True", "selectedIds": "[]"}, backend="entrypoint")
+    entry = _cancel_postings_modal(order)
+
+    if _REASONS_MODAL in entry:
+        state = widget(session.fetch(entry, backend="entrypoint"), "selectCancelReason") or {}
+        try:
+            carried = json.loads(state.get("state") or "{}")
+        except (ValueError, TypeError):
+            carried = {}
+        params = carried.get("Parameters")
+        if not isinstance(params, dict):
+            msg = f"order {order} exposes no cancellation parameters"
+            raise OzonError(msg)
+        return entry, params
+
+    # Load the form before acting on it: Ozon builds the per-order form on that
+    # GET, and posting into one it has not built answers with an empty widget.
+    session.fetch(entry, backend="entrypoint")
+    selected = session.post_page(entry, {"SelectAll": "True", "selectedIds": "[]"}, backend="entrypoint")
     button = (widget(selected, "cancelPostingsRms") or {}).get("button") or {}
     action = button.get("action") or (button.get("common") or {}).get("action") or {}
     if not action.get("link"):
-        msg = f"order {order} has nothing cancellable left"
+        msg = f"order {order} can no longer be cancelled (already delivered, or nothing left in it)"
         raise OzonError(msg)
     opened = session.action(str(action["link"]), action.get("params") or {})
     link = ((opened.get("data") or {}).get("action") or {}).get("link")
@@ -144,6 +186,16 @@ def list_cancel_reasons(order: str) -> list[CancelReason]:
     return reasons
 
 
+def _follow_action(node_source: Any, needle: str) -> dict[str, Any] | None:
+    """The first action whose link mentions ``needle``, wherever it is hung."""
+    for node in walk(node_source):
+        for holder in (node, node.get("common") if isinstance(node.get("common"), dict) else {}):
+            action = holder.get("action") if isinstance(holder, dict) else None
+            if isinstance(action, dict) and needle in str(action.get("link") or ""):
+                return action
+    return None
+
+
 def cancel_order(
     order: str,
     reason_id: str = "504",
@@ -153,18 +205,15 @@ def cancel_order(
     """Cancel an order and, by default, put its items back in the cart.
 
     ``reason_id`` comes from list_cancel_reasons; the default is "changed my
-    mind, will reorder", which is the neutral one. Reason "508" is rejected
-    without a ``comment``.
+    mind, will reorder", the neutral one. Reason "508" is rejected without a
+    ``comment``.
 
-    Ozon inserts a retention screen between the reason and the cancellation, so
-    the confirming action is taken from the response rather than assumed — that
-    screen is why choosing a reason alone leaves the order alive.
-
-    **Known gap:** the reason step currently answers with an empty shell rather
-    than that screen, so this returns ``cancelled=False`` with what Ozon said
-    instead of finishing. The final call is ``v2/cancelOrderRms`` and needs the
-    numeric ``OrderId``, which none of the reachable payloads expose. Cancelling
-    through the site works; automating it does not yet.
+    Cancelling is a six-step conversation and every step hands the next its
+    parameters — including ids, like the internal OrderId, that appear nowhere
+    else. So each step follows the action the previous response carried instead
+    of rebuilding it: select the parcels, open the reasons, choose one, open the
+    modal Ozon puts between the reason and the deed (it offers to change the
+    address instead), and only then confirm.
     """
     _require_writes()
     if reason_id == _NEEDS_COMMENT_REASON and not comment.strip():
@@ -173,40 +222,41 @@ def cancel_order(
 
     session = get_session()
     link, params = _reasons_modal(order)
-    state_payload = {
-        "IsCheckboxChecked": return_to_cart,
-        "Parameters": params,
-        "Comment": comment,
-    }
+    state = {"IsCheckboxChecked": return_to_cart, "Parameters": _typed(params), "Comment": comment}
     chosen = session.post_page(
         link,
-        {"ReasonId": reason_id, "state": json.dumps(state_payload, ensure_ascii=False)},
+        {"ReasonId": reason_id, "state": json.dumps(state, ensure_ascii=False)},
         backend="entrypoint",
     )
 
-    confirm = next(
-        (
-            node["action"]
-            for node in walk(chosen)
-            if isinstance(node.get("action"), dict) and _CANCEL_ORDER_ACTION in str(node["action"].get("link") or "")
-        ),
-        None,
-    )
-    if confirm is None:
-        # No confirming action means Ozon is still asking something (its
-        # retention offer), so report that instead of pretending success.
+    opener = _follow_action(widget(chosen, "selectCancelReason") or {}, _MODAL_CONSTRUCTOR_ACTION)
+    if opener is None:
         texts = [text for text in find_all(chosen, "text") if isinstance(text, str) and text.strip()]
         return OrderCancelled(
             order_number=order,
             cancelled=False,
             reason_id=reason_id,
-            detail=" | ".join(dict.fromkeys(texts))[:300] or "Ozon did not offer the confirming step",
+            detail=" | ".join(dict.fromkeys(texts))[:300] or "Ozon did not offer the next step",
+        )
+    opened = session.action(str(opener["link"]), opener.get("params") or {})
+    modal_link = ((opened.get("data") or {}).get("action") or {}).get("link")
+    if not modal_link:
+        return OrderCancelled(
+            order_number=order, cancelled=False, reason_id=reason_id, detail="Ozon did not open the confirmation"
         )
 
-    payload = dict(confirm.get("params") or {})
-    payload["Comment"] = comment
-    payload["IsCheckboxChecked"] = str(return_to_cart)
-    result = session.action(str(confirm["link"]), payload)
+    confirmation = session.fetch(str(modal_link), backend="entrypoint")
+    confirm = _follow_action(widget(confirmation, "modalConstructor") or confirmation, _CANCEL_ORDER_ACTION)
+    if confirm is None:
+        texts = [text for text in find_all(confirmation, "text") if isinstance(text, str) and text.strip()]
+        return OrderCancelled(
+            order_number=order,
+            cancelled=False,
+            reason_id=reason_id,
+            detail=" | ".join(dict.fromkeys(texts))[:300] or "Ozon offered no way to confirm",
+        )
+
+    result = session.action(str(confirm["link"]), confirm.get("params") or {})
     ok = result.get("_httpStatus") == HTTPStatus.OK
     return OrderCancelled(
         order_number=order,

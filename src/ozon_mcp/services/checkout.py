@@ -124,6 +124,8 @@ def _match_payment_option(options: list[PaymentOption], wanted: str) -> PaymentO
     """Resolve a payment method from a word, a masked card, or the raw id."""
     needle = wanted.strip().casefold()
     known_types = {option.payment_type for option in options if option.payment_type is not None}
+    selectable = [option for option in options if option.apply_link or option.selected]
+    options = selectable or options
     # A bare number is an id only if the order actually offers it; otherwise it
     # is a card number, which can look just as short (2044 vs 5898).
     if needle.isdigit() and int(needle) in known_types:
@@ -141,8 +143,9 @@ def _match_payment_option(options: list[PaymentOption], wanted: str) -> PaymentO
     for option in options:
         kind = (option.kind or "").casefold()
         label = (option.label or "").casefold()
-        if option.payment_type is None:
-            continue
+        # Not every method has a payment_type — Ozon Card, the credit card and
+        # instalments are identified by their link alone — so requiring one here
+        # would hide exactly the methods a person names most often.
         if target_kind and kind == target_kind:
             return option
         if needle and (needle in kind or needle in label):
@@ -232,7 +235,9 @@ def configure_checkout(
         checkout = _apply(link)
     if payment is not None:
         option = _match_payment_option(checkout.payment_options, payment)
-        if option.apply_link:
+        # Ozon drops the link from the method already in use, so its absence
+        # means "already selected", not "cannot be selected".
+        if option.apply_link and not option.selected:
             checkout = _apply(option.apply_link)
     if pay_after_receipt is not None:
         checkout = _set_pay_after_receipt(checkout, enabled=pay_after_receipt)
@@ -289,10 +294,11 @@ def place_order(confirm_total: str) -> OrderPlaced:
     instead of another polling instruction, so this comes back only once the
     order actually exists.
 
-    **Known gap:** with a card payment the order is created but left "Ожидаем
-    оплаты" — Ozon expects a further authorisation step
-    (``payfacadeGatewayAuthorizePayment``) that is not implemented, and no order
-    number comes back. Pay-on-delivery completes fully.
+    Paying by card cannot be finished here: Ozon asks for the bank passcode on
+    its own page, which is a person's credential and a deliberate barrier, not a
+    missing feature. Such an order is still created — ``awaiting_payment`` is
+    set and ``payment_url`` points at that page. Pay-on-delivery completes in
+    full.
     """
     if not get_settings().enable_orders:
         raise OrdersDisabledError
@@ -311,8 +317,18 @@ def place_order(confirm_total: str) -> OrderPlaced:
         created = data.get("createOrderResponse")
         if isinstance(created, dict):
             link = str(created.get("link") or "")
-            number = re.search(r"orderNumber=([\w\-]+)", link)
-            return OrderPlaced(order_number=number.group(1) if number else None, total=actual, link=link or None)
+            back = str(created.get("returnLink") or "")
+            # A card order puts the number in returnLink and the confirmation
+            # page in link; a pay-on-delivery order puts the number in link.
+            number = re.search(r"orderNumber=([\w\-]+)", back) or re.search(r"orderNumber=([\w\-]+)", link)
+            pending = "payment-confirm" in link
+            return OrderPlaced(
+                order_number=number.group(1) if number else None,
+                total=actual,
+                link=back or link or None,
+                awaiting_payment=pending,
+                payment_url=link if pending else None,
+            )
         pooling = data.get("poolingDetails") or {}
         time.sleep((pooling.get("delay") or 500) / 1000)
     msg = "order creation did not finish in time; check the orders list before retrying"
