@@ -48,6 +48,10 @@ a persistent browser profile seeded by one interactive login.
 | `get_lists` | Wishlists with their ids and sizes; with a sku, whether each holds it |
 | `create_list` / `delete_list` | Make a wishlist or delete one (gated) |
 | `set_list_membership` | Put a product in a list or take it out (gated) |
+| `list_selections` / `get_selection` | «Подборки»: sizes, statuses, description, visibility |
+| `create_selection` / `edit_selection` / `delete_selection` | Make, rename, remove one (gated) |
+| `set_selection_items` | Set which products a selection holds (gated) |
+| `set_selection_public` | Publish a selection to the public profile, or unpublish (gated) |
 | `check_favorite_price_drops` | Price diff for favorites since the previous call |
 | `get_checkout` | The order being formed: payment, pay-on-delivery (and how much of the order it covers), destinations, pickup points, shipments with their items, points, totals |
 | `configure_checkout` | Set payment, points, pay-on-delivery and pickup point in one call |
@@ -62,6 +66,26 @@ a persistent browser profile seeded by one interactive login.
 
 Mutation tools are **disabled by default** — set `OZON_ENABLE_WRITES=1` to allow
 them.
+
+### Wishlists and «Подборки» are two different things
+
+A **wishlist** (вишлист) is a plain list with a numeric id: `get_lists`,
+`create_list`, `set_list_membership`. A **«Подборка»** is a curated, publishable
+one — it has a uuid, a cover, a description and a visibility, and it lives
+behind its own endpoints. Both are covered, and neither substitutes for the
+other.
+
+Three things about selections have no equivalent on the wishlist side, and all
+three are settled by the API rather than assumed:
+
+- **Products come from favorites only.** Ozon's own picker offers nothing else,
+  so `set_favorite` first; a product that is not favorited is dropped silently.
+- **One call sets the whole product list**, so removing is passing the products
+  that should stay. `set_selection_items` reads the resulting count back.
+- **Publishing is outward-facing and reviewed.** It puts the selection on the
+  account owner's public profile, so `create_selection` defaults to private, and
+  the status reads "На модерации" for a while afterwards — which is why
+  visibility is reported separately as `public`, read from the selection itself.
 
 ## Using it from an agent
 

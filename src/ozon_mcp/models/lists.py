@@ -37,3 +37,31 @@ class PriceDiff(OzonModel):
     rises: list[PriceChange] = []
     added: list[str] = []
     removed: list[str] = []
+
+
+class Selection(OzonModel):
+    """One «Подборка» — a curated list of products, publishable to a profile.
+
+    A different entity from a wishlist: identified by a ``uuid`` rather than a
+    numeric id, it carries a cover, a description and a visibility, and reading
+    it needs ``owner_id`` alongside the uuid.
+
+    ``status`` is Ozon's own wording for where the selection stands — "Личная
+    подборка" while it is private, "N сохранений" once public, "На модерации"
+    while it is being reviewed — because publishing is not instant. It is not a
+    substitute for ``public``: a selection under review reads "На модерации"
+    whichever way its visibility is set, so the two are reported separately.
+
+    ``description`` and ``public`` are only known when the selection is read on
+    its own (``get_selection``); listing them all does not carry either.
+    """
+
+    uuid: str
+    owner_id: str | None = None
+    name: str | None = None
+    description: str | None = None
+    items: int | None = None
+    status: str | None = None
+    public: bool | None = None
+    cover: str | None = None
+    link: str | None = None
