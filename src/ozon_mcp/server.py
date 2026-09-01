@@ -34,7 +34,8 @@ from ozon_mcp.models.checkout import (
 from ozon_mcp.models.finance import Finances, Points
 from ozon_mcp.models.lists import ListRef, PriceDiff
 from ozon_mcp.models.orders import Order, OrderProduct
-from ozon_mcp.services import cart, catalog, checkout, favorites, finance, orders
+from ozon_mcp.models.session import LoginStep, SessionStatus
+from ozon_mcp.services import cart, catalog, checkout, favorites, finance, orders, session
 
 mcp = FastMCP("ozon")
 
@@ -320,6 +321,37 @@ async def cancel_order(
     instead of cancelling, and `detail` then carries what it asked.
     """
     return await run_blocking(lambda: orders.cancel_order(order, reason_id, comment, return_to_cart=return_to_cart))
+
+
+# ── session ──────────────────────────────────────────────────────────────────
+@mcp.tool()
+async def session_status() -> SessionStatus:
+    """Whether the stored Ozon session still acts as the account.
+    Every other tool raises instead of answering when it does not — a signed-out
+    session otherwise looks like an empty account: no orders, no balances, no
+    explanation.
+    """
+    return await run_blocking(session.session_status)
+
+
+@mcp.tool()
+async def start_login(login: str) -> LoginStep:
+    """Ask Ozon to send a one-time login code to `login` (account email or
+    phone). Use this when session_status() reports signed_in=false and the kept
+    profile copy did not recover it.
+    Ozon delivers the code out of band (email, SMS or a flash call), so ask the
+    user for it and pass it to submit_login_code().
+    """
+    return await run_blocking(lambda: session.start_login(login))
+
+
+@mcp.tool()
+async def submit_login_code(code: str) -> SessionStatus:
+    """Finish the login with the code Ozon sent, and keep a copy of the restored
+    profile so the next sign-out costs nobody a code.
+    Codes expire and are single-use: if it is refused, call start_login() again.
+    """
+    return await run_blocking(lambda: session.submit_login_code(code))
 
 
 # ── finance ──────────────────────────────────────────────────────────────────

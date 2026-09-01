@@ -35,3 +35,16 @@ class TotalMismatchError(OzonError):
 
     def __init__(self, expected: str, actual: str | None) -> None:
         super().__init__(f"order total is {actual!r}, not the confirmed {expected!r}; re-read get_checkout()")
+
+
+class SessionExpiredError(OzonError):
+    """The stored session is no longer signed in and could not be restored.
+
+    Raised instead of returning empty results, which is what a signed-out
+    session otherwise looks like: orders vanish, balances read as None, and
+    nothing says why. Recovering needs a one-time code, so it is the caller's
+    job to ask for one — see ``start_login`` / ``submit_login_code``.
+    """
+
+    def __init__(self, detail: str = "") -> None:
+        super().__init__(f"OZON session is signed out; run start_login() and submit_login_code() to restore it{detail}")
