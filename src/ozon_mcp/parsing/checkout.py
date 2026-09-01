@@ -69,23 +69,33 @@ def _link(node: dict[str, Any]) -> str:
 
 
 def parse_payment_options(state: Any) -> list[PaymentOption]:
+    """The payment methods Ozon offers, from ``paymentInfoV2.payments``.
+
+    That list is the one the page renders; walking the widget for links instead
+    finds only the secondary entries and silently drops Ozon Card, the credit
+    card and instalments. Identity differs per method — ``payment_type`` for
+    most, ``card_token`` for a saved card, ``part_payment_method`` for
+    instalments — so the apply link is the authoritative selector and the type
+    is exposed only where it exists. The selected method carries no link, which
+    is how Ozon marks it.
+    """
     options: list[PaymentOption] = []
-    seen: set[tuple[int | None, str | None]] = set()
-    for node in walk(state):
-        match = _PAYMENT_TYPE_RE.search(_link(node))
-        if not match:
+    entries = state.get("payments") if isinstance(state, dict) else None
+    for entry in entries or []:
+        if not isinstance(entry, dict):
             continue
-        option = PaymentOption(
-            payment_type=int(match.group(1)),
-            label=_text(node.get("title")),
-            kind=node.get("automatizationDescription"),
-            selected=node.get("isSelected"),
-            apply_link=_link(node),
+        link = _link(entry)
+        match = _PAYMENT_TYPE_RE.search(link)
+        label = _text(entry.get("title"))
+        options.append(
+            PaymentOption(
+                payment_type=int(match.group(1)) if match else None,
+                label=label,
+                kind=entry.get("automatizationDescription"),
+                selected=bool(entry.get("isSelected")),
+                apply_link=link or None,
+            )
         )
-        key = (option.payment_type, option.label)
-        if key not in seen:
-            seen.add(key)
-            options.append(option)
     return options
 
 
