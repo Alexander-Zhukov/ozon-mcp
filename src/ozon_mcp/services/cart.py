@@ -21,13 +21,15 @@ from ozon_mcp.dependencies import get_session
 from ozon_mcp.errors import OzonError, WritesDisabledError
 from ozon_mcp.models.common import WriteResult
 from ozon_mcp.parsing.cart import parse_cart
-from ozon_mcp.parsing.common import next_page
+from ozon_mcp.parsing.common import declared_count, next_pages
 from ozon_mcp.settings import get_settings
 
 if TYPE_CHECKING:
-    from ozon_mcp.models.cart import Cart
+    from ozon_mcp.models.cart import Cart, CartItem
 
 
+# The header states the cart's real size on this tab.
+_CART_TAB = "Корзина"
 _MAX_CART_PAGES = 30
 
 # Modes Ozon itself sends from the checkboxes; SPECIFIED variants are idempotent
@@ -46,31 +48,34 @@ def _require_writes() -> None:
 def get_cart() -> Cart:
     """The whole cart, following the scroll pagination.
 
-    A large cart arrives a page at a time, and a caller deciding what to order
-    needs all of it — so the pages are walked here rather than exposed.
+    Ozon serves the cart four items at a time and offers more than one
+    paginator, shuffled between requests, only one of which continues the items
+    — so the walk tries each in turn and keeps going until it has as many items
+    as the cart itself says it holds. Without that, the same call answered 38
+    items or 4 depending on which paginator came first, and a caller choosing
+    what to order had no way to tell.
     """
     session = get_session()
     data = session.fetch("/cart")
     cart = parse_cart(data)
+    cart.total_items = declared_count(data, tab=_CART_TAB)
     seen = {item.id for item in cart.items}
     for _ in range(_MAX_CART_PAGES):
-        following = next_page(data)
-        if not following:
+        if cart.total_items is not None and len(cart.items) >= cart.total_items:
             break
-        data = session.fetch(following, backend="entrypoint")
-        page = parse_cart(data)
-        fresh = [item for item in page.items if item.id and item.id not in seen]
-        if not fresh:
-            # An empty page reads the same as the end of the cart, so ask once
-            # more before believing it.
-            data = session.fetch(following, backend="entrypoint")
-            page = parse_cart(data)
+        fresh: list[CartItem] = []
+        for following in next_pages(data):
+            page_data = session.fetch(following, backend="entrypoint")
+            page = parse_cart(page_data)
             fresh = [item for item in page.items if item.id and item.id not in seen]
-            if not fresh:
+            if fresh:
+                data = page_data
+                cart.groups += [group for group in page.groups if group not in cart.groups]
                 break
+        if not fresh:
+            break
         seen.update(item.id for item in fresh)
         cart.items += fresh
-        cart.groups += [g for g in page.groups if g not in cart.groups]
     cart.item_count = len(cart.items)
     return cart
 

@@ -132,14 +132,31 @@ def prices(node: Any) -> list[str]:
     return list(dict.fromkeys(PRICE_RE.findall(json.dumps(node, ensure_ascii=False))))
 
 
-def next_page(data: dict[str, Any]) -> str | None:
-    """Next scroll-page path. Prefers a paginator.nextPage; otherwise (favorites/
-    purchases scroll) rebuilds it from pageInfo.url by advancing
-    layout_page_index and swapping in the next embedded ``page=`` cursor token.
+def continues_this_list(url: str) -> bool:
+    """Whether a paginator's next page continues the list being read.
+
+    A page carries a paginator per scrolling block, and one of those blocks is
+    always "you might also like": the favorites page offers
+    ``recoms_pagination_favorites_web`` beside the favorites cursor itself.
+    Following the first paginator found therefore walked into recommendations
+    and stopped there, which reads exactly like the end of the list — 39
+    favorites came back as 20, and 12 of those 20 were not favorites at all.
+
+    Only recommendation containers are excluded, and by name. The rest are the
+    list: the cart continues through ``SplitInCartPaginator``, because its items
+    are rendered as splits, so a stricter rule would truncate it instead.
     """
-    for state in widgets_all(data, "paginator"):
-        if isinstance(state, dict) and state.get("nextPage"):
-            return str(state["nextPage"])
+    container = re.search(r"layout_container=([^&]+)", url)
+    return container is None or "recom" not in str(container.group(1)).lower()
+
+
+def _rebuilt_next(data: dict[str, Any]) -> str | None:
+    """The next scroll page rebuilt from ``pageInfo``.
+
+    Favorites and purchases advertise no paginator past the first page: the
+    cursor is a ``page=`` token embedded in the payload, and the next page is
+    the current url with the index advanced and that token swapped in.
+    """
     current = (data.get("pageInfo") or {}).get("url") or ""
     if "layout_page_index" not in current:
         return None
@@ -148,8 +165,62 @@ def next_page(data: dict[str, Any]) -> str | None:
     index_match = re.search(r"layout_page_index=(\d+)", current)
     index = int(index_match.group(1)) if index_match else 1
     tokens = re.findall(r"[?&]page=(\d{6,})", json.dumps(data, ensure_ascii=False))
-    next_token = next((t for t in tokens if t != current_token), None)
+    next_token = next((token for token in tokens if token != current_token), None)
     if not next_token:
         return None
     url = re.sub(r"layout_page_index=\d+", f"layout_page_index={index + 1}", current)
     return re.sub(r"([?&]page=)\d+", rf"\g<1>{next_token}", url)
+
+
+def next_pages(data: dict[str, Any]) -> list[str]:
+    """Every way this list can continue, in a stable order.
+
+    Two things make a single answer unreliable. Ozon shuffles the paginators
+    between identical requests, so taking "the first one" is a coin toss — the
+    cart came back with 38 items or with 4 depending on which of its two
+    paginators happened to lead. And some lists advertise no paginator at all
+    past the first page, continuing through a cursor rebuilt from ``pageInfo``.
+
+    So the candidates are sorted for repeatability, with the rebuilt cursor last:
+    a caller walks them in order and tries the next when one is a dead end.
+    """
+    offered = {
+        str(state["nextPage"])
+        for state in widgets_all(data, "paginator")
+        if isinstance(state, dict) and state.get("nextPage")
+    }
+    candidates = sorted(url for url in offered if continues_this_list(url))
+    rebuilt = _rebuilt_next(data)
+    if rebuilt and rebuilt not in candidates:
+        candidates.append(rebuilt)
+    return candidates
+
+
+def next_page(data: dict[str, Any]) -> str | None:
+    """The most likely next scroll page of the list being read."""
+    return next(iter(next_pages(data)), None)
+
+
+def declared_count(data: dict[str, Any], *, tab: str) -> int | None:
+    """How many entries Ozon says the list has.
+
+    The page states it in its own header — the cart tab carries ``count`` — and
+    that number is what tells a short read from a complete one: pages arrive
+    four at a time and a walk that stops early looks exactly like a small cart.
+    """
+    for state in widgets_all(data, "header"):
+        for node in walk(state):
+            if node.get("name") == tab and isinstance(node.get("count"), int):
+                return int(node["count"])
+    return None
+
+
+def declared_counter(data: dict[str, Any], widget_name: str) -> int | None:
+    """A badge count, as the favorites and lists pages render it."""
+    state = widget(data, widget_name) or {}
+    for node in walk(state):
+        counter = node.get("counter")
+        text = counter.get("text") if isinstance(counter, dict) else None
+        if isinstance(text, str) and text.strip().isdigit():
+            return int(text.strip())
+    return None

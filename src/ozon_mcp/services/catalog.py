@@ -26,7 +26,7 @@ from ozon_mcp.models.catalog import (
     Tile,
 )
 from ozon_mcp.parsing import catalog as parse
-from ozon_mcp.parsing.common import next_page
+from ozon_mcp.parsing.common import declared_counter, next_pages
 from ozon_mcp.parsing.orders import order_numbers_from_link, parse_order_products
 
 if TYPE_CHECKING:
@@ -181,7 +181,7 @@ def order_products(order: str) -> list[OrderProduct]:
     return products
 
 
-def _paginate_tiles(path: str, limit: int, backend: str = "composer") -> list[Tile]:
+def _paginate_tiles(path: str, limit: int, backend: str = "composer", counter: str | None = None) -> list[Tile]:
     """Walk a scroll-paginated tile list.
 
     A page that comes back empty is retried once before the walk ends: an
@@ -193,18 +193,32 @@ def _paginate_tiles(path: str, limit: int, backend: str = "composer") -> list[Ti
     tiles: list[Tile] = []
     seen: set[str] = set()
     data = session.fetch(path, backend=backend)
+    # A page offers a paginator per block, and one of them is always
+    # "you might also like" — followed by mistake, it fills the answer with
+    # products that are not on the list at all.
+    ceiling = declared_counter(data, counter) if counter else None
+    target = min(limit, ceiling) if ceiling else limit
     for _ in range(_MAX_TILE_PAGES):
         for tile in parse.parse_tiles(data):
             if tile.sku and tile.sku not in seen:
                 seen.add(tile.sku)
                 tiles.append(tile)
-        following = next_page(data)
-        if len(tiles) >= limit or not following:
+        if len(tiles) >= target:
             break
-        data = session.fetch(following, backend="entrypoint")
-        if not parse.parse_tiles(data):
-            data = session.fetch(following, backend="entrypoint")
-    return tiles[:limit]
+        advanced = False
+        for following in next_pages(data):
+            page = session.fetch(following, backend="entrypoint")
+            if parse.parse_tiles(page):
+                data, advanced = page, True
+                break
+            # An upstream hiccup reads the same as the end of the list.
+            page = session.fetch(following, backend="entrypoint")
+            if parse.parse_tiles(page):
+                data, advanced = page, True
+                break
+        if not advanced:
+            break
+    return tiles[:target]
 
 
 def purchases(query: str | None = None, limit: int = 100, sort: str = "newest") -> list[Tile]:
