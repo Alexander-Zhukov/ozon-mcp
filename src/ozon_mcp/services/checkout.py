@@ -16,6 +16,7 @@ import re
 import time
 from itertools import combinations
 from typing import Any, Final
+from uuid import uuid4
 
 from ozon_mcp.dependencies import get_session
 from ozon_mcp.errors import OrdersDisabledError, OzonError, TotalMismatchError
@@ -40,7 +41,13 @@ from ozon_mcp.utils.money import to_kopecks
 _CONTAINER: Final = "layout_container=checkout&layout_page_index=2"
 _CHECKOUT_PATH: Final = f"/gocheckout?{_CONTAINER}"
 _CREATE_ORDER_ACTION: Final = "v2/createOrderV2"
-_INIT_CHECKOUT_ACTION: Final = "initCheckoutState"
+# The cart's «Перейти к оформлению» is a page load, not an action: these are the
+# parameters it carries, and they are what makes Ozon rebuild the checkout from
+# the current ticks.
+_ENTRY_PATH: Final = (
+    "/gocheckout?activeTab=0&session_uid={session}&start=0"
+    "&totalCart=0&totalCartWithOzonCard=0&totalCurrency=RUB&snp=false"
+)
 # Order creation is asynchronous: the first call schedules it and the client
 # re-calls the same action until the response carries the result instead of
 # another polling instruction.
@@ -283,29 +290,43 @@ def _target_delivery(checkout: Checkout, split_key: str | None) -> Delivery:
     return deliveries[0]
 
 
-def start_checkout() -> Checkout:
-    """Form a checkout from the items currently ticked in the cart.
+def _enter_checkout() -> None:
+    """Enter checkout the way the cart's «Перейти к оформлению» button does.
 
-    Ozon needs this step before /gocheckout resolves to anything: without it the
-    URL falls back to the cart, which reads as "nothing to order" even though
-    items are selected. It is what pressing «Перейти к оформлению» does.
+    Ozon's checkout is a snapshot of the cart's ticks taken on entry, and only
+    an entry replaces it. Unticking an item afterwards changes the cart and not
+    the order: the cart reported one item and 649 ₽ while the checkout kept two
+    and 768 ₽ — in the site's own browser as well, so an order placed then would
+    have contained an item nobody selected.
+
+    The entry is the page load with the parameters that button carries. Nothing
+    else rebuilds the snapshot: /gocheckout without them serves the previous
+    state, and the ``initCheckoutState`` action answers 503. The totals in the
+    query are the cart's, in kopecks, and are not checked — zeros rebuild just
+    as well — but they are sent because the button sends them.
     """
+    get_session().fetch(_ENTRY_PATH.format(session=uuid4()), backend="entrypoint")
+
+
+def start_checkout(*, with_points: bool = True, with_shipments: bool | None = None) -> Checkout:
+    """Form the checkout from the items currently ticked in the cart."""
     from ozon_mcp.services.cart import get_cart  # ruff: ignore[import-outside-top-level] - avoids a cycle
 
-    selected = [(item.id, item.quantity or 1) for item in get_cart().items if item.checked and item.id]
-    if not selected:
+    if not any(item.checked for item in get_cart().items):
         return Checkout(available=False, reason="no cart items are selected — select them first")
-    body = {"items": [{"id": sku, "quantity": quantity} for sku, quantity in selected]}
-    get_session().action(_INIT_CHECKOUT_ACTION, body)
-    return _read()
+    _enter_checkout()
+    return _read(with_points=with_points, with_shipments=with_shipments)
 
 
 def get_checkout(shipment_items: bool | None = None) -> Checkout:
-    """The order being formed, initialising it if Ozon has not done so yet."""
-    checkout = _read(with_shipments=shipment_items)
-    if not checkout.available and "selected" not in (checkout.reason or ""):
-        return start_checkout()
-    return checkout
+    """The order being formed from the items ticked in the cart right now.
+
+    Entering is part of the read rather than a fallback for an unformed
+    checkout: a plain read answers with whatever snapshot Ozon still holds,
+    which is the composition from the previous entry. Entering keeps the options
+    already chosen — payment, pay-on-delivery, points — so this is not a reset.
+    """
+    return start_checkout(with_shipments=shipment_items)
 
 
 def configure_checkout(
@@ -407,7 +428,9 @@ def place_order(confirm_total: str) -> OrderPlaced:
     """
     if not get_settings().enable_orders:
         raise OrdersDisabledError
-    checkout = _read(with_points=False)
+    # Entering first, for the same reason get_checkout does: a plain read can
+    # hand over a composition the cart no longer holds, and this one is charged.
+    checkout = start_checkout(with_points=False)
     if not checkout.available:
         msg = checkout.reason or "no order to place"
         raise OzonError(msg)

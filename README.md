@@ -128,7 +128,11 @@ Some of Ozon's behaviour does not follow from a tool's name.
 
 **The cart ticks are the order.** `get_checkout` reports nothing orderable until
 something is ticked, and it orders exactly what is ticked — so "buy these two"
-is `select_cart_items(skus, mode="only")`, whatever else the cart holds.
+is `select_cart_items(skus, mode="only")`, whatever else the cart holds. Ozon's
+checkout is a snapshot of those ticks taken when checkout is entered, and only an
+entry replaces it: unticking an item afterwards changes the cart and not the
+order. `get_checkout` and `place_order` therefore enter checkout before reading,
+which keeps the options already chosen.
 
 **Two money figures, never interchangeable.** `totals.total` is what Ozon charges
 today; `totals.order_total` is what the order costs. On a pay-on-delivery order

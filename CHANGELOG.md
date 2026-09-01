@@ -4,6 +4,18 @@ Notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/).
 
+## [1.1.1] - 2026-09-01
+
+### Fixed
+
+- The checkout could describe an order the caller had not composed. Ozon's
+  checkout is a snapshot of the cart's ticks taken when checkout is entered, and
+  only an entry replaces it — the cart reported one item and 649 ₽ while the
+  checkout kept two and 768 ₽, in the site's own browser as well. `get_checkout`
+  and `place_order` now enter checkout the way the cart's «Перейти к оформлению»
+  button does, which keeps the options already chosen. The `initCheckoutState`
+  action this used to rely on answers 503 and never rebuilt anything.
+
 ## [1.1.0] - 2026-09-01
 
 ### Added
