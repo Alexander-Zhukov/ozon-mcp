@@ -119,6 +119,10 @@ new profile — enough for the read tools, but not for checkout.
 
 - **Refresh tokens are single-use.** Restoring an older copy of a session fails
   and lands you on an anonymous one, so an old backup is not a rollback.
+- **Chromium writes its cookie jar out when it exits, not as it goes.** The
+  server closes the browser at process exit and before backing the profile up,
+  because a profile copied from under a running Chromium — or a container simply
+  stopped — is the session as it was *before* the login.
 - **Visiting the checkout login flow downgrades the session to a guest.** The
   server refuses to persist such a state rather than overwriting a working
   login with it.

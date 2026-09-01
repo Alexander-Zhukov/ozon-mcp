@@ -64,6 +64,13 @@ Backend = str  # "composer" | "entrypoint" | "action"
 
 # OZON hands out tokens shaped "<ver>.<userId>.<secret>"; userId 0 means guest.
 _GUEST_USER_ID: Final = "0"
+# Ozon serves each login step from its own "-lite" iframe: the email or phone
+# form from /ozonid-lite, the one-time code from /otp-lite.
+_AUTH_FRAME_MARKERS: Final[tuple[str, ...]] = ("ozonid", "otp-lite")
+
+
+def _is_auth_frame(url: str) -> bool:
+    return any(marker in url for marker in _AUTH_FRAME_MARKERS)
 
 
 def _outcome(status: int) -> str:
@@ -127,7 +134,13 @@ class OzonSession:
         does — and with a persistent profile Chrome writes that logged-out state
         straight to disk, where no HTTP-side guard can intercept it. Without a
         copy, recovering costs another one-time code from the account owner.
+
+        The browser is closed first, and that is the whole point: Chromium keeps
+        its cookie jar in memory and writes it out when it exits, so copying the
+        directory while it runs snapshots the session as it was *before* the
+        login — which is how a fresh sign-in ended up backed up as a guest one.
         """
+        self._close_browser()
         if not self._profile.exists():
             return
         try:
@@ -392,11 +405,18 @@ class OzonSession:
 
     # -- interactive login ---------------------------------------------------
     def _auth_frame(self) -> Any:
-        """OzonID renders the login in an iframe; wait for it to appear."""
+        """The iframe holding the current login step; wait for it to appear.
+
+        The step changes the iframe: the email form is served from
+        ``/ozonid-lite`` and, once the address is submitted, Ozon swaps in
+        ``/otp-lite`` for the code. Matching only the first URL made the code
+        step look like a vanished login form, so a login begun in one call could
+        never be completed in another.
+        """
         for _ in range(30):
-            for frame in self._page.frames:
-                if "ozonid" in (frame.url or ""):
-                    return frame
+            frame = next((frame for frame in self._page.frames if _is_auth_frame(frame.url or "")), None)
+            if frame is not None:
+                return frame
             self._page.wait_for_timeout(1000)
         msg = "OzonID login frame never appeared"
         raise OzonError(msg)
@@ -431,8 +451,8 @@ class OzonSession:
     def complete_login(self, code: str) -> bool:
         """Type the one-time code and report whether the account is signed in.
 
-        OZON's code field stays ``disabled`` and updates from a React handler on
-        that very input, so digits only register if the input is the event
+        The code field can arrive ``disabled`` and updates from a React handler
+        on that very input, so digits only register if the input is the event
         target: it is enabled and focused first, then real keystrokes are sent.
         """
         with self._lock:
@@ -449,12 +469,14 @@ class OzonSession:
                     button.click(timeout=2_500)
             for _ in range(20):
                 self._page.wait_for_timeout(1_000)
-                if not any("ozonid" in (frame.url or "") for frame in self._page.frames):
+                if not any(_is_auth_frame(frame.url or "") for frame in self._page.frames):
                     break
             self._page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
             self._page.wait_for_timeout(4_000)
             signed_in = self._browser_is_signed_in()
             if signed_in:
+                # Closes the browser, which flushes the new session to the
+                # profile; the next call relaunches against it.
                 self.back_up_profile()
                 self._http = None
             self._logging_in = not signed_in

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
+import contextlib
 from concurrent.futures import ThreadPoolExecutor
 from functools import cache
 from typing import TYPE_CHECKING
@@ -15,8 +17,22 @@ if TYPE_CHECKING:
 
 @cache
 def get_session() -> OzonSession:
-    """The process-wide OZON session; disposed via ``get_session.cache_clear()``."""
-    return OzonSession()
+    """The process-wide OZON session; disposed via ``get_session.cache_clear()``.
+
+    Closing it at process exit is not housekeeping: Chromium owns the profile
+    and only writes its cookie jar out when it shuts down, so a process that
+    just dies loses every token rotated during the run — and, once, a login
+    that had already succeeded.
+    """
+    session = OzonSession()
+
+    def flush() -> None:
+        # Interpreter shutdown is a hostile place to raise from.
+        with contextlib.suppress(Exception):
+            session.close()
+
+    atexit.register(flush)
+    return session
 
 
 @cache
