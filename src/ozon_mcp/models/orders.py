@@ -34,3 +34,11 @@ class OrderProduct(OzonModel):
     variant: str | None = None
     seller: str | None = None
     url: str | None = None
+
+
+class Return(OzonModel):
+    """One buyer return, as the returns page lists it."""
+
+    title: str | None = None
+    status: str | None = None
+    link: str | None = None

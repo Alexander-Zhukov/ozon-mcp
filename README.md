@@ -32,7 +32,7 @@ a persistent browser profile seeded by one interactive login.
 | `list_orders` | Orders (active / archive / all), optionally within an ISO date range |
 | `order_products` | Items of one order: sku, title, price paid, variant, seller |
 | `purchases` | Purchase history — all of it, or a fast server-side search |
-| `list_returns` | Buyer returns |
+| `list_returns` | Buyer returns with their status |
 | `search` | Storefront search by text and/or category, with sort and facet filters |
 | `get_search_filters` | Facets available for a query (category / brand / price range / …) |
 | `product_details` | Card: price, variants, characteristics, photos; description and reviews on request |
@@ -54,13 +54,33 @@ a persistent browser profile seeded by one interactive login.
 | `place_order` | **Spends money** — submit, waiting until the order exists (gated by `OZON_ENABLE_ORDERS`) |
 | `list_cancel_reasons` | Reasons Ozon accepts for cancelling an order |
 | `cancel_order` | Cancel an order, or just some of its items, returning them to the cart (gated) |
-| `session_status` | Whether the stored session still acts as the account |
+| `session_status` | Whether the session acts as the account — and which gates are open |
 | `start_login` / `submit_login_code` | Restore a dead session with a one-time code |
 | `get_finances` | Ozon Card balance and total points |
 | `get_points` | Points by type + burning + per-store seller bonuses |
 
 Mutation tools are **disabled by default** — set `OZON_ENABLE_WRITES=1` to allow
 them.
+
+## Using it from an agent
+
+The server is meant to be usable with nothing but its own schema, because that
+is all an agent gets. Three things carry that weight:
+
+- **Server instructions**, sent on connect, state the flows: start at
+  `session_status`, what the buying sequence is and why each step is a
+  precondition for the next, and which of the two money figures to quote.
+- **Every argument describes itself** in the JSON schema, and every closed set
+  of values (`scope`, `sort`, `mode`) is an enum there rather than prose to
+  parse.
+- **Errors name the next call.** A signed-out session, a disabled gate and a
+  total that no longer matches each explain what to do — they are written to be
+  relayed to the user.
+
+`session_status` answers what cannot be guessed: whether the session is alive
+and whether writes and order placement are allowed. Those two are the
+operator's settings, so an agent should plan around them rather than discover
+them halfway through an order.
 
 ### Pay-on-delivery is not all-or-nothing
 
