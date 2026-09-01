@@ -1,6 +1,6 @@
 [project]
 name = "ozon-mcp"
-version = "1.1.1"
+version = "1.2.0"
 description = "Model Context Protocol server for the ozon.ru buyer account: orders, cart, favorites, product cards, purchase history and catalog search over the internal composer-api."
 readme = "README.md"
 license = { text = "MIT" }

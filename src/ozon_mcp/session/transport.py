@@ -67,8 +67,10 @@ _SERVER_ERROR: Final = 500
 # Enough of a failing body to recognise it in a log or an error, no more.
 _EXCERPT_CHARS: Final = 200
 # Ozon serves each login step from its own "-lite" iframe: the email or phone
-# form from /ozonid-lite, the one-time code from /otp-lite.
-_AUTH_FRAME_MARKERS: Final[tuple[str, ...]] = ("ozonid", "otp-lite")
+# form from /ozonid-lite, the one-time code from /otp-lite — so the frame's URL
+# is what tells the two steps apart.
+_OTP_FRAME: Final = "otp-lite"
+_AUTH_FRAME_MARKERS: Final[tuple[str, ...]] = ("ozonid", _OTP_FRAME)
 
 
 def _is_auth_frame(url: str) -> bool:
@@ -503,8 +505,14 @@ class OzonSession:
     def begin_login(self, login: str) -> str:
         """Open the login form and ask Ozon to send a one-time code.
 
-        The code is delivered out of band, so this returns as soon as it has
-        been requested; ``complete_login`` finishes the job.
+        The code is delivered out of band, so this returns as soon as Ozon has
+        moved on to asking for it; ``complete_login`` finishes the job.
+
+        Reaching that step is checked rather than assumed. Clicking through the
+        form and reporting "a code was sent" regardless is how a login that Ozon
+        never accepted — an address it does not know, a form that wanted a phone,
+        a challenge in the way — became "waiting for a code that never arrives",
+        with nothing to say why.
         """
         with self._lock:
             self._logging_in = True
@@ -525,7 +533,25 @@ class OzonSession:
                 frame.locator("input").first.fill(login)
             frame.get_by_role("button", name="Войти", exact=True).first.click(timeout=self._browser_ms(0.15))
             self._page.wait_for_timeout(5_000)
+            self._require_code_step()
             return "email" if by_mail else "phone"
+
+    def _require_code_step(self) -> None:
+        """Prove Ozon is now asking for the code, or say what it is asking instead."""
+        for _ in range(20):
+            if any(_OTP_FRAME in (frame.url or "") for frame in self._page.frames):
+                return
+            self._page.wait_for_timeout(1_000)
+        said = ""
+        with suppress(Exception):
+            frame = next((f for f in self._page.frames if _is_auth_frame(f.url or "")), None)
+            if frame is not None:
+                said = str(frame.evaluate("() => document.body.innerText") or "")
+        # The form echoes the login back, so only the sentences that explain the
+        # refusal are worth relaying — the rest is the account's own identifier.
+        lines = [line.strip() for line in said.splitlines() if line.strip() and "@" not in line]
+        msg = "Ozon did not move on to the code step: " + (" | ".join(lines[:6]) or "the login form said nothing")
+        raise OzonError(msg)
 
     def complete_login(self, code: str) -> bool:
         """Type the one-time code and report whether the account is signed in.

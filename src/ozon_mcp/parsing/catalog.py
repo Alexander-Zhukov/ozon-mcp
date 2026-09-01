@@ -19,7 +19,6 @@ from ozon_mcp.parsing.common import (
     IMAGE_RE,
     PRICE_RE,
     find_all,
-    prices,
     state_by_layout,
     walk,
     widget,
@@ -162,11 +161,23 @@ def parse_product(data: dict[str, Any]) -> ProductCard:
         if name:
             variants.append(Variant(name=name, options=options))
 
+    best_seller = widget(data, "webBestSeller") or {}
     return ProductCard(
         title=heading.get("title") or next(iter(find_all(heading, "text")), None),
-        sku=next(iter(find_all(sku_widget, "sku")), None) or next(iter(find_all(sku_widget, "text")), None),
-        price=next(iter(prices(price_widget)), None),
-        price_list=prices(price_widget),
+        # webDetailSKU writes it as «Артикул: 3662719065», and the label travels
+        # with it — passed on as an id it breaks every URL built from it.
+        sku=_digits_of(next(iter(find_all(sku_widget, "sku")), None) or next(iter(find_all(sku_widget, "text")), None)),
+        # webPrice names its three figures, and its own lexemes say which is
+        # which: cardPrice is «С банками» — the one actually charged — price is
+        # «С другими банками», originalPrice the struck-through comparison.
+        # Reading "the first money-looking string" instead picked whichever the
+        # payload happened to start with.
+        price=_atom_text_of(price_widget.get("cardPrice")) or _atom_text_of(price_widget.get("price")),
+        price_regular=_atom_text_of(price_widget.get("price")),
+        price_old=_atom_text_of(price_widget.get("originalPrice")),
+        available=price_widget.get("isAvailable") if isinstance(price_widget.get("isAvailable"), bool) else None,
+        cheaper_offers=_int_or_none(best_seller.get("count")),
+        cheaper_from=_from_price(best_seller),
         variants=variants,
         characteristics=parse_characteristics(data),
         photos=parse_gallery(data),
@@ -334,3 +345,72 @@ def parse_delivery_widget(state: Any) -> dict[str, str | None]:
         "address": address_lines[0] if address_lines else None,
         "source": address_lines[1] if len(address_lines) > 1 else None,
     }
+
+
+def _atom_text_of(value: Any) -> str | None:
+    """Text of a price field, which is either the string itself or an atom."""
+    if isinstance(value, str):
+        return str(value).strip() or None
+    if isinstance(value, dict):
+        inner = value.get("price") if "price" in value else value.get("text")
+        return _atom_text_of(inner)
+    return None
+
+
+def _int_or_none(value: Any) -> int | None:
+    text = str(value or "")
+    return int(text) if text.isdigit() else None
+
+
+def _from_price(best_seller: dict[str, Any]) -> str | None:
+    """Ozon's «от N ₽» under «Есть дешевле или быстрее», as it writes it."""
+    parts = best_seller.get("textRs") if isinstance(best_seller, dict) else None
+    for part in parts or []:
+        content = part.get("content") if isinstance(part, dict) else None
+        if isinstance(content, str) and content.strip().startswith("от"):
+            return str(content).strip()
+    return None
+
+
+def parse_seller_offers(data: dict[str, Any]) -> list[Tile]:
+    """Offers of other sellers, from the modal behind «Есть дешевле или быстрее».
+
+    Ozon states each offer's payable price, its seller and when it would
+    arrive — but no product title, so a caller confirming the model has to open
+    the card. The list is served in whatever order the modal was asked for, and
+    ``sort=price`` is the order that matters here.
+    """
+    state = widget(data, "webSellerList") or {}
+    offers: list[Tile] = []
+    for seller in (state.get("sellers") if isinstance(state, dict) else None) or []:
+        if not isinstance(seller, dict):
+            continue
+        sku = str(seller.get("sku") or "") or None
+        price_block = seller.get("price") if isinstance(seller.get("price"), dict) else {}
+        delivery = next(
+            (
+                text
+                for advantage in seller.get("advantages") or []
+                if isinstance(advantage, dict)
+                for text in find_all(advantage.get("contentRs") or {}, "content")
+                if isinstance(text, str) and text.strip()
+            ),
+            None,
+        )
+        offers.append(
+            Tile(
+                sku=sku,
+                price=_atom_text_of(price_block.get("cardPrice")) or _atom_text_of(price_block.get("price")),
+                price_regular=_atom_text_of(price_block.get("price")) if "cardPrice" in price_block else None,
+                url=str(seller.get("productLink") or "") or (f"https://www.ozon.ru/product/{sku}/" if sku else None),
+                seller=str(seller.get("name") or "") or None,
+                delivery=delivery,
+            )
+        )
+    return offers
+
+
+def _digits_of(value: Any) -> str | None:
+    """The sku inside a value that may carry a label with it."""
+    found = re.search(r"\d{6,}", str(value or ""))
+    return found.group(0) if found else None

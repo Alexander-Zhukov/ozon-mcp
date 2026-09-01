@@ -90,17 +90,29 @@ def widget_with(data: dict[str, Any], prefix: str, *keys: str) -> Any:
 
 
 def widgets_all(data: dict[str, Any], prefix: str) -> list[Any]:
-    """Parsed states of every widget whose key starts with ``prefix`` (e.g. each
-    cartSplit — the cart is split across «доступны»/«недоступны»).
+    """Parsed states of every widget named ``prefix`` (e.g. each cartSplit — the
+    cart is split across «доступны»/«недоступны»).
+
+    A widget's key is "<name>-<id>-<layout>-<index>", and the name is matched
+    whole. Falling back to "starts with" is kept for callers that ask for a
+    family of widgets, but it comes second, because a page carries names that
+    are prefixes of each other: asking for ``webPrice`` on a product card also
+    matches ``webPriceDecreasedCompact``, and which one came first depended on
+    the order Ozon happened to serve them in — so the same card answered with a
+    price or with «Стало дешевле», at random.
     """
-    out: list[Any] = []
+    exact: list[Any] = []
+    loose: list[Any] = []
     for key, raw in (data.get("widgetStates") or {}).items():
-        if key.split("-", 1)[0] == prefix or key.startswith(prefix):
-            try:
-                out.append(loads(raw) if isinstance(raw, str) else raw)
-            except (ValueError, TypeError):
-                continue
-    return out
+        name = key.split("-", 1)[0]
+        bucket = exact if name == prefix else loose if key.startswith(prefix) else None
+        if bucket is None:
+            continue
+        try:
+            bucket.append(loads(raw) if isinstance(raw, str) else raw)
+        except (ValueError, TypeError):
+            continue
+    return exact or loose
 
 
 def _walk(node: Any) -> Iterator[dict[str, Any]]:
@@ -139,10 +151,18 @@ def continues_this_list(url: str) -> bool:
     and stopped there, which reads exactly like the end of the list — 39
     favorites came back as 20, and 12 of those 20 were not favorites at all.
 
-    Only recommendation containers are excluded, and by name. The rest are the
-    list: the cart continues through ``SplitInCartPaginator``, because its items
-    are rendered as splits, so a stricter rule would truncate it instead.
+    Search adds a second way to walk off the list: when nothing matched exactly,
+    Ozon marks the continuation ``non_found=1`` and fills it with "you might also
+    like". Those pages read as results and rank cheapest-first, so a query with
+    no exact match answered with car cloths and cable covers instead of saying it
+    found nothing.
+
+    Only those two are excluded, and by name. The rest are the list: the cart
+    continues through ``SplitInCartPaginator``, because its items are rendered as
+    splits, so a stricter rule would truncate it instead.
     """
+    if "non_found=1" in url:
+        return False
     container = re.search(r"layout_container=([^&]+)", url)
     return container is None or "recom" not in str(container.group(1)).lower()
 
@@ -181,16 +201,42 @@ def next_pages(data: dict[str, Any]) -> list[str]:
     So the candidates are sorted for repeatability, with the rebuilt cursor last:
     a caller walks them in order and tries the next when one is a dead end.
     """
+    # Two widgets do the paginating, and a page may carry either: `paginator`
+    # for the ordinary lists and `infiniteVirtualPaginator` on search results.
+    # A search Ozon treats as "nothing matched exactly" (non_found=1) puts no
+    # tiles in the page at all and serves them only through the second one, so
+    # reading just `paginator` answered "no results" for a query that had them.
     offered = {
         str(state["nextPage"])
-        for state in widgets_all(data, "paginator")
+        for name in ("paginator", "infiniteVirtualPaginator")
+        for state in widgets_all(data, name)
         if isinstance(state, dict) and state.get("nextPage")
     }
     candidates = sorted(url for url in offered if continues_this_list(url))
     rebuilt = _rebuilt_next(data)
     if rebuilt and rebuilt not in candidates:
         candidates.append(rebuilt)
+    # Truly last resort: only when the page offered nothing else, or a list that
+    # rebuilds its cursor would be walked with a stale one.
+    stepped = _stepped_next(data) if not candidates else None
+    if stepped:
+        candidates.append(stepped)
     return candidates
+
+
+def _stepped_next(data: dict[str, Any]) -> str | None:
+    """The next container index of a list that offers no paginator of its own.
+
+    A container fetched by ``layout_page_index`` often answers without one — the
+    site simply asks for the following index — so the walk would stop after the
+    first batch. Advancing the index is the last resort, tried after the offered
+    pages.
+    """
+    current = str((data.get("pageInfo") or {}).get("url") or "")
+    match = re.search(r"layout_page_index=(\d+)", current)
+    if not match:
+        return None
+    return re.sub(r"layout_page_index=\d+", f"layout_page_index={int(match.group(1)) + 1}", current)
 
 
 def next_page(data: dict[str, Any]) -> str | None:

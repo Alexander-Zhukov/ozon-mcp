@@ -55,13 +55,13 @@ login — makes the others wait.
 
 | Tool | |
 |---|---|
-| `search` | Storefront search by text and/or category slug, with sort and facet filters |
+| `search` | Storefront search by text and/or category slug, with sort, facet filters and a depth `limit` |
 | `get_search_filters` | Facets available for a query, and the values `search` takes |
 | `product_details` | Card: price, variants (each with its own sku), characteristics, photos; description and reviews on request |
 | `get_reviews` | Reviews with score, text, dates, photos |
 | `get_description` | Description text plus the images embedded in it |
 | `delivery_estimate` | When a product would arrive, to which address, from which warehouse |
-| `find_cheaper` | The same or a similar product below the current price |
+| `find_cheaper` | The cheapest lots of the same thing: Ozon's own other-seller offers plus a price-sorted search |
 
 **Cart**
 
@@ -152,6 +152,19 @@ an order can be part deferred and part prepaid — an imported item usually has 
 be paid up front. `pay_after_receipt.scope` is `full`, `partial` or `none`; on a
 partial order `pay_now_items` and `pay_on_receipt_items` name the lines on each
 side, as Ozon splits them.
+
+**Three prices, and only one of them is charged.** A card states `price` («С
+банками» — what the account pays), `price_regular` («С другими банками») and
+`price_old` (struck through). Comparing lots on anything but the first calls a
+lot cheaper than it is, so `search(sort="cheap")` and `find_cheaper` rank on it.
+
+**Ozon's text search is literal.** A lot whose own title omits the brand is not
+returned for a query that includes it — and when nothing matches exactly Ozon
+fills the page with "you might also like", which is dropped rather than passed
+off as results. So search the model, not brand-plus-model, and confirm what a lot
+is with `product_details`: a tile's title is the seller's wording and may name no
+model at all. `limit` is depth — pages are walked until it is met, because the
+cheapest lot is regularly not on the first one.
 
 **Wishlists and «Подборки» are different things.** A wishlist has a numeric id
 and holds anything. A selection has a uuid, a cover, a description and a

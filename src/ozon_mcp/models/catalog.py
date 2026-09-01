@@ -10,9 +10,14 @@ class Tile(OzonModel):
 
     sku: str | None = None
     title: str | None = None
-    price: str | None = None
-    price_old: str | None = None
+    price: str | None = Field(
+        default=None, description="What this lot costs to pay — Ozon's «С банками» price when it prints one."
+    )
+    price_regular: str | None = Field(default=None, description="Ozon's «С другими банками» price, when it differs.")
+    price_old: str | None = Field(default=None, description="The struck-through price Ozon compares against.")
     url: str | None = None
+    seller: str | None = Field(default=None, description="Set on offers from other sellers, which carry no title.")
+    delivery: str | None = Field(default=None, description='Ozon\'s own line, e.g. "Доставим 9 сентября".')
 
 
 class VariantOption(OzonModel):
@@ -61,8 +66,19 @@ class ProductCard(OzonModel):
 
     title: str | None = None
     sku: str | None = None
-    price: str | None = None
-    price_list: list[str] = Field(default_factory=list)
+    price: str | None = Field(
+        default=None, description="The payable price — Ozon's «С банками» figure, which is what the account pays."
+    )
+    price_regular: str | None = Field(default=None, description="Ozon's «С другими банками» price.")
+    price_old: str | None = Field(default=None, description="The struck-through price Ozon compares against.")
+    available: bool | None = Field(default=None, description="Whether Ozon offers it for sale at all.")
+    cheaper_offers: int | None = Field(
+        default=None,
+        description="How many other-seller offers Ozon counts for this product; find_cheaper() lists them.",
+    )
+    cheaper_from: str | None = Field(
+        default=None, description="Ozon's own «от N ₽» for those offers — the lowest it knows about."
+    )
     variants: list[Variant] = Field(default_factory=list)
     characteristics: list[Characteristic] = Field(default_factory=list)
     photos: list[str] = Field(default_factory=list)

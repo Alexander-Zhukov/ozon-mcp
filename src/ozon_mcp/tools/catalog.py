@@ -27,16 +27,26 @@ async def search(
             '{key: "min;max"} for a range, e.g. {"currency_price": "200;600"}.'
         ),
     ] = None,
+    limit: Limit = 36,
 ) -> list[Tile]:
     """Storefront search → product tiles (sku/title/price/url). Give a text
     query, a category slug ("produkty-dlya-doma-9200"), or both.
+    limit is depth, not page size: pages are walked until there are that many
+    results, so raise it when looking for the cheapest — a page holds a few
+    dozen and the cheapest lot is often further down. sort="cheap" ranks on the
+    payable price (Ozon's own order goes by a different figure).
+    Ozon's text search is literal about words: a lot whose own title omits the
+    brand does not come back for a query that includes it, so search the model
+    ("Basilisk V3 X HyperSpeed") rather than brand-plus-model, and confirm what a
+    lot actually is with product_details() — a tile's title is the seller's
+    wording and may name no model at all.
     A tile is not a card: for variants, characteristics, photos and stock call
     product_details() with its sku.
     filters comes from get_search_filters() — {key: option_value} for a
     checkbox or category facet, {key: "min;max"} for a range, e.g.
     {"currency_price": "200;600"}. Narrowing by price is a filter, not a sort.
     """
-    return await run_blocking(lambda: catalog.search(query, category, sort, page, filters))
+    return await run_blocking(lambda: catalog.search(query, category, sort, page, filters, limit))
 
 
 @mcp.tool()
@@ -62,7 +72,12 @@ async def product_details(
         Field(description="Also fetch the reviews (one extra request)."),
     ] = False,
 ) -> ProductCard:
-    """Product card: title, price, variants, characteristics, gallery photos.
+    """Product card: title, three prices, variants, characteristics, gallery photos.
+    Money as Ozon prints it: `price` is «С банками» — what the account actually
+    pays and the figure to compare lots on — `price_regular` is «С другими
+    банками», `price_old` the struck-through comparison. `available` says whether
+    it is on sale at all. `cheaper_offers` / `cheaper_from` are Ozon's own count
+    and lowest price for other offers of this product; find_cheaper() lists them.
     Each variant carries its own sku, price and availability — that sku is what
     goes into the cart, and for apparel it is the only one that will add.
     with_description / with_reviews fetch those too (separate requests each);
@@ -100,7 +115,14 @@ async def delivery_estimate(sku_or_url: SkuOrUrl) -> DeliveryEstimate:
 
 @mcp.tool()
 async def find_cheaper(sku_or_url: SkuOrUrl, limit: Limit = 10) -> Cheaper:
-    """Find the same or a similar product cheaper: takes the card's title,
-    searches the storefront and returns options below the current price.
+    """The cheapest lots of the same thing, ranked by payable price — top `limit`
+    (default 10).
+    Looks in both places Ozon keeps them: its own «Есть дешевле или быстрее»
+    offers for this exact product, and a price-sorted search by the card's
+    title, which reaches the same product listed separately. Entries carry
+    `seller` and `delivery` when they came from the offers list, and offers have
+    no title — confirm the model with product_details() before quoting one.
+    Raises when the base price cannot be read, rather than answering "nothing is
+    cheaper" for a product it failed to price.
     """
     return await run_blocking(lambda: catalog.find_cheaper(sku_or_url, limit))

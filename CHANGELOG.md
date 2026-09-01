@@ -4,6 +4,55 @@ Notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/).
 
+## [1.2.0] - 2026-09-02
+
+### Fixed
+
+- **A widget name is now matched whole.** Names were matched by prefix, so asking
+  a product card for `webPrice` could return `webPriceDecreasedCompact` instead —
+  whichever Ozon served first. The same card therefore answered with its price or
+  with «Стало дешевле» at random, which is how `find_cheaper` came to report
+  "nothing is cheaper" for a product it had failed to price.
+- **`search` walks the results.** It read one page and stopped, and a page is not
+  the results: some queries put no tiles in the page at all and serve them only
+  through its paginator, which was never followed because that widget is named
+  `infiniteVirtualPaginator`. `limit` is now depth, and pages are walked to meet
+  it.
+- **A query with no exact match no longer answers with unrelated products.** Ozon
+  marks that continuation `non_found=1` and fills it with "you might also like";
+  those pages are dropped, so such a query returns nothing instead of ranking car
+  cloths as the cheapest mouse.
+- **`find_cheaper` raises when it cannot read the base price**, instead of
+  answering with an empty list that reads as "nothing is cheaper".
+- The card's sku came back as «Артикул: 3662719065», label and all, breaking every
+  URL built from it.
+- `start_login` reported "a code was sent" without checking that Ozon had moved on
+  to asking for one. An address Ozon does not know, or a form that wanted a phone,
+  therefore became "waiting for a code that never arrives" — now it says what the
+  form said.
+- `entrypoint.sh` clears a stale X lock and fails loudly if the display does not
+  come up. A container that was stopped and started rather than recreated kept its
+  `/tmp`, Xvfb refused the display, and the server ran with /metrics answering and
+  every tool failing.
+
+### Changed
+
+- Prices are read from the fields Ozon names: `price` is «С банками» — what is
+  actually charged — with `price_regular` and `price_old` beside it, on both cards
+  and tiles. `ProductCard.price_list` is gone; it was the first money-looking
+  strings in the widget, in payload order.
+- `search(sort="cheap"/"expensive")` ranks on the payable price rather than
+  trusting Ozon's own order, which goes by a different figure.
+- `find_cheaper` merges two sources into one ranking: Ozon's «Есть дешевле или
+  быстрее» offers for this exact product, and a price-sorted search by the card's
+  title, filtered to lots whose titles actually resemble it. Offers carry
+  `seller` and `delivery`.
+
+### Added
+
+- `ProductCard.available`, and `cheaper_offers` / `cheaper_from` — Ozon's own count
+  of other offers and the lowest price among them.
+
 ## [1.1.1] - 2026-09-01
 
 ### Fixed
