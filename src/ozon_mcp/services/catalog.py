@@ -19,6 +19,7 @@ from ozon_mcp.models.catalog import (
     DeliveryEstimate,
     Description,
     ProductCard,
+    Purchase,
     Reviews,
     SearchFilter,
     Tile,
@@ -39,6 +40,10 @@ _OFFERS_PATH: Final = "/modal/otherOffersFromSellers?product_id={sku}&sort=price
 # How far a comparison looks when the caller asked for a small top: the cheapest
 # lot of a popular product is regularly a page or two down.
 _CHEAPER_SEARCH_DEPTH: Final = 40
+# Resolving a purchase to its order costs one request per order, and the history
+# runs into the hundreds — deep enough to cover a year, bounded so one call
+# cannot walk the whole account.
+_ORDER_SCAN_LIMIT: Final = 300
 
 
 _DELIVERY_JS: Final = r"""() => {
@@ -283,12 +288,15 @@ def order_products(order: str) -> list[OrderProduct]:
     session = get_session()
     numbers = [order] if ORDER_NUMBER_RE.fullmatch(order.strip()) else order_numbers_from_link(order)
     products: list[OrderProduct] = []
-    seen: set[str] = set()
+    # One sku can travel in two parcels of the same order and end up received in
+    # one and cancelled in the other, so the parcel is part of its identity.
+    seen: set[tuple[str, str]] = set()
     for number in numbers:
         data = session.fetch(f"/my/orderdetails/?order={number}")
-        for product in parse_order_products(data):
-            if product.sku not in seen:
-                seen.add(product.sku)
+        for product in parse_order_products(data, order_number=number):
+            key = (product.sku, product.shipment_id or "")
+            if key not in seen:
+                seen.add(key)
                 products.append(product)
     return products
 
@@ -333,14 +341,73 @@ def _paginate_tiles(path: str, limit: int, backend: str = "composer", counter: s
     return tiles[:target]
 
 
-def purchases(query: str | None = None, limit: int = 100, sort: str = "newest") -> list[Tile]:
-    """Purchase history — everything ever bought, or just what matches a query.
+def purchases(
+    query: str | None = None,
+    limit: int = 100,
+    sort: str = "newest",
+    *,
+    with_status: bool = False,
+    scan_orders: int = _ORDER_SCAN_LIMIT,
+) -> list[Purchase]:
+    """Purchase history — everything ever ordered, or just what matches a query.
 
     Ozon has a dedicated server-side search over purchases which is far cheaper
     than paginating the whole list, so a query switches to it.
+
+    The list itself says nothing about outcomes. «Купленные товары» holds every
+    product that was ever ordered, refusals at the pickup point included, and its
+    tiles carry a name and today's catalogue price — no order, no date, no
+    status. Читая его одного, "куплено" is an assumption, and on this account a
+    wrong one: two of the items in it came from an order Ozon shows as «Отменён».
+
+    ``with_status`` therefore goes to the orders, where the outcome actually
+    lives, and matches every sku against them. That costs one request per order
+    scanned, so it is off by default and bounded by ``scan_orders`` — an item not
+    found within the bound comes back with ``received`` None, which means "not
+    found", not "not received". The bound matters: this account's archive reaches
+    back to 2020 and holds 870 orders, so the default covers the recent ones and
+    an old purchase needs a deeper scan.
     """
     if query:
-        return _paginate_tiles(f"/my/purchases/search?text={quote(query, safe='')}", limit, backend="entrypoint")
-    value = PURCHASE_SORTS.get(sort, sort)
-    path = f"/my/favorites/list?list={PURCHASES_LIST_ID}" + (f"&sorting={value}" if value else "")
-    return _paginate_tiles(path, limit)
+        found = _paginate_tiles(f"/my/purchases/search?text={quote(query, safe='')}", limit, backend="entrypoint")
+    else:
+        value = PURCHASE_SORTS.get(sort, sort)
+        path = f"/my/favorites/list?list={PURCHASES_LIST_ID}" + (f"&sorting={value}" if value else "")
+        found = _paginate_tiles(path, limit)
+    bought = [Purchase(**tile.model_dump()) for tile in found]
+    if with_status:
+        _attach_order_status(bought, scan_orders)
+    return bought
+
+
+def _attach_order_status(bought: list[Purchase], scan_orders: int) -> None:
+    """Fill each purchase's outcome from the orders it appears in.
+
+    Newest orders first, stopping as soon as every sku has been placed: the
+    history is long, and each order costs a request. A sku found in several
+    parcels counts as received if any of them was — that is what "I have it"
+    means when one of two was refused.
+    """
+    from ozon_mcp.services.orders import list_orders  # ruff: ignore[import-outside-top-level] - avoids a cycle
+
+    wanted = {purchase.sku: purchase for purchase in bought if purchase.sku}
+    if not wanted:
+        return
+    numbers: list[str] = []
+    for row in list_orders("all", limit=scan_orders):
+        for number in row.order_numbers or ([row.order_number] if row.order_number else []):
+            if number not in numbers:
+                numbers.append(number)
+    unresolved = set(wanted)
+    for number in numbers[:scan_orders]:
+        for product in order_products(number):
+            purchase = wanted.get(product.sku)
+            if purchase is None:
+                continue
+            if purchase.received is not True:
+                purchase.order_number = product.order_number or number
+                purchase.order_status = product.shipment_status
+                purchase.received = product.received
+            unresolved.discard(product.sku)
+        if not unresolved:
+            break

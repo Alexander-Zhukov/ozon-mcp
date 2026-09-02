@@ -58,5 +58,11 @@ CartSelectMode = Annotated[
 ]
 IsoDate = Annotated[
     str,
-    Field(pattern=r"^\d{4}-\d{2}-\d{2}$", description='A date as YYYY-MM-DD, e.g. "2026-07-01".'),
+    Field(
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description=(
+            'A date as YYYY-MM-DD, e.g. "2026-07-01". For orders this is the date in the status — when it was '
+            "received or cancelled — because that is the only date the archive prints."
+        ),
+    ),
 ]

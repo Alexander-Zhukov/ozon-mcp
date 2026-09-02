@@ -20,6 +20,26 @@ class Tile(OzonModel):
     delivery: str | None = Field(default=None, description='Ozon\'s own line, e.g. "Доставим 9 сентября".')
 
 
+class Purchase(Tile):
+    """A product from «Купленные товары», with what the orders say about it.
+
+    Ozon's own list is a list of products, not of outcomes: it holds everything
+    that was ever ordered, including what was refused at the pickup point, and
+    it states no status at all. So the status is taken from the orders, and
+    ``received`` is None when the item was not found among the orders scanned —
+    which is not the same as "not received".
+    """
+
+    order_number: str | None = None
+    order_status: str | None = Field(
+        default=None, description='Ozon\'s word for the parcel this item came in: "Получен", "Отменён".'
+    )
+    received: bool | None = Field(
+        default=None,
+        description="True if a parcel with it was received, False if every one was cancelled, None if not found.",
+    )
+
+
 class VariantOption(OzonModel):
     """One value of a product aspect — itself a purchasable SKU."""
 

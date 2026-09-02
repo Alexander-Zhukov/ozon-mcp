@@ -25,10 +25,16 @@ def _require_writes() -> None:
 _MAX_ARCHIVE_PAGES: Final = 200
 
 
-def _archive_pages(limit: int, stop_before: str | None = None) -> list[Order]:
+def _archive_pages(limit: int, date_from: str | None = None, date_to: str | None = None) -> list[Order]:
     """Completed-orders history (tab «Завершённые»), paginated via the archive
-    "load more" cursor embedded in each response. Archive is newest→oldest, so
-    ``stop_before`` (ISO date) ends pagination once a whole page is older.
+    "load more" cursor embedded in each response.
+
+    The archive runs newest→oldest — this account's reaches back to 2020 over 870
+    rows — so a window is walked to rather than filtered for: ``limit`` counts the
+    rows **inside** it, and pagination ends once a whole page is older than
+    ``date_from``. Counting every row scanned instead, which is what this did,
+    made a window deep in history unreachable: asking for July 2024 with a limit
+    of 500 stopped somewhere in 2025 and answered "no orders in that month".
     """
     session = get_session()
     orders: list[Order] = []
@@ -37,14 +43,16 @@ def _archive_pages(limit: int, stop_before: str | None = None) -> list[Order]:
     for _ in range(_MAX_ARCHIVE_PAGES):
         page = parse_orders(data)
         for order in page:
-            if order.detail_link and order.detail_link not in seen:
-                seen.add(order.detail_link)
+            if not order.detail_link or order.detail_link in seen:
+                continue
+            seen.add(order.detail_link)
+            if _within(order, date_from, date_to):
                 orders.append(order)
         if len(orders) >= limit or not page:
             break
-        if stop_before:
-            page_dates = [o.date for o in page if o.date]
-            if page_dates and max(page_dates) < stop_before:
+        if date_from:
+            page_dates = [order.date for order in page if order.date]
+            if page_dates and max(page_dates) < date_from:
                 break
         match = re.search(r"/my/orderlist\?[^\"\\ ]*archiveOrdersStart=\d+[^\"\\ ]*", dumps(data))
         if not match:
@@ -52,6 +60,20 @@ def _archive_pages(limit: int, stop_before: str | None = None) -> list[Order]:
         following = match.group(0).replace("\\u0026", "&").replace("\\/", "/")
         data = session.fetch(following, backend="entrypoint")
     return orders[:limit]
+
+
+def _within(order: Order, date_from: str | None, date_to: str | None) -> bool:
+    """Whether a row's date falls inside the window, if one was asked for.
+
+    The date is the one in the status — when the order was received or cancelled
+    — because that is the only date the archive prints. A row without one is
+    outside any window rather than silently inside it.
+    """
+    if not date_from and not date_to:
+        return True
+    if not order.date:
+        return False
+    return (not date_from or order.date >= date_from) and (not date_to or order.date <= date_to)
 
 
 def list_orders(
@@ -72,7 +94,7 @@ def list_orders(
     plus the archive, and a finished order arrives once.
     """
     if date_from or date_to:
-        return orders_by_date(date_from or "0000-01-01", date_to or "9999-12-31", limit)
+        return _archive_pages(limit, date_from, date_to)
     orders: list[Order] = []
     if scope in {"active", "all"}:
         listed = parse_orders(get_session().fetch("/my/orderlist"))
@@ -83,7 +105,8 @@ def list_orders(
 
 
 def orders_by_date(date_from: str, date_to: str, max_orders: int = 300) -> list[Order]:
-    return [o for o in _archive_pages(max_orders, stop_before=date_from) if o.date and date_from <= o.date <= date_to]
+    """Completed orders whose status date falls in the window, newest first."""
+    return _archive_pages(max_orders, date_from, date_to)
 
 
 # --- cancellation -----------------------------------------------------------

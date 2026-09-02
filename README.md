@@ -47,8 +47,8 @@ login — makes the others wait.
 | Tool | |
 |---|---|
 | `list_orders` | Orders (active / archive / all), each with its `order_number`, status, state, pickup point, slot, what is owed on collection and per-item payment state; optionally within an ISO date range |
-| `order_products` | Items of one order: sku, title, price paid, variant, seller |
-| `purchases` | Everything ever bought, as product tiles; with a query, Ozon's own search over the history |
+| `order_products` | Items of one order: sku, title, price paid, variant, seller, and each item's parcel status |
+| `purchases` | Everything ever **ordered**, as product tiles; with a query, Ozon's own search over the whole history; `with_status` says what was actually received |
 | `list_returns` | Returns: number, date, status, amount, the products going back |
 
 **Catalog**
@@ -152,6 +152,23 @@ an order can be part deferred and part prepaid — an imported item usually has 
 be paid up front. `pay_after_receipt.scope` is `full`, `partial` or `none`; on a
 partial order `pay_now_items` and `pay_on_receipt_items` name the lines on each
 side, as Ozon splits them.
+
+**«Купленные товары» is a list of products, not of outcomes.** It holds
+everything ever ordered — including what was refused at the pickup point — and
+states no order, no date and no status; its price is today's catalogue price, not
+what was paid. On the account this was built against, 17 of 29 items matching one
+query had been ordered and never taken home. The outcome lives in the orders: an
+order is delivered in parcels with separate fates, so `order_products` reports
+`shipment_status` and `received` per item, and `purchases(with_status=true)`
+matches the list against the orders to fill them in. `received` null means "not
+found among the orders scanned", not "not received".
+
+**An order's dates are status dates.** The archive prints only «Получен 11
+августа» / «Отменён 12 февраля 2021», so a date range filters on when an order
+was received or cancelled — an order placed on 30 June and received on 2 July
+lands in July. The archive is a newest-first cursor, so a window is walked down
+to: the cost is the depth, not the width. A recent fortnight comes back in half a
+second; a month two years back takes tens of seconds.
 
 **Three prices, and only one of them is charged.** A card states `price` («С
 банками» — what the account pays), `price_regular` («С другими банками») and

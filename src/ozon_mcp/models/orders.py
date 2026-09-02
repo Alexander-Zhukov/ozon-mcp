@@ -72,14 +72,29 @@ class Order(OzonModel):
 
 
 class OrderProduct(OzonModel):
-    """A product as it appears in an order."""
+    """A product as it appears in an order, with the fate of its parcel.
+
+    An order is delivered in parcels and each has its own outcome, so «Получен»
+    and «Отменён» sit side by side in one order — an item refused at the pickup
+    point is cancelled while the rest of the order is received. The status
+    therefore belongs to the item, not to the order.
+    """
 
     sku: str
     title: str | None = None
-    price: str | None = None
+    price: str | None = Field(default=None, description="What was paid for it in this order, as Ozon renders it.")
     variant: str | None = None
     seller: str | None = None
     url: str | None = None
+    order_number: str | None = Field(default=None, description="The order this line belongs to.")
+    shipment_id: str | None = Field(default=None, description="The parcel it travelled in.")
+    shipment_status: str | None = Field(
+        default=None, description='Ozon\'s own word for that parcel: "Получен", "Отменён", "В пути".'
+    )
+    received: bool | None = Field(
+        default=None,
+        description="True when the parcel was «Получен», False when «Отменён», None while it is still in flight.",
+    )
 
 
 class ReturnProduct(OzonModel):

@@ -234,7 +234,13 @@ def parse_orders(data: dict[str, Any]) -> list[Order]:
 _PRODUCT_LINK_RE: Final = re.compile(r"/product/(?:[a-z0-9\-]+-)?(\d{6,})")
 
 
-def parse_order_products(data: dict[str, Any]) -> list[OrderProduct]:
+# Each parcel states its own outcome in its header, and Ozon tags it.
+_SHIPMENT_STATUS_TAG: Final = "shipment-status"
+_RECEIVED_STATUS: Final = "Получен"
+_CANCELLED_STATUS: Final = "Отменён"
+
+
+def parse_order_products(data: dict[str, Any], order_number: str | None = None) -> list[OrderProduct]:
     """Products of an order-details page, read from their own fields.
 
     The page nests them as ``shipmentWidget.items[].sellers[].products[]`` — one
@@ -243,10 +249,19 @@ def parse_order_products(data: dict[str, Any]) -> list[OrderProduct]:
     that structure avoids guessing: the page also renders statuses, tracking
     sentences and seller names that no text-shape heuristic can tell from a
     product name.
+
+    Each parcel also states its own outcome, and one order holds parcels with
+    different ones: refusing an item at the pickup point cancels its parcel while
+    the rest of the order is received. Flattening the parcels — which is what
+    this did — lost that, and «Купленные товары» plus an order number then read
+    as "bought" for something nobody took home. So the status travels with the
+    item, and a sku appearing in two parcels is kept once per parcel.
     """
     products: list[OrderProduct] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for state in widgets_all(data, "shipmentWidget"):
+        shipment_id = str(state.get("shipmentId") or "") or None
+        status = _tagged_text(state.get("header") or [], _SHIPMENT_STATUS_TAG)
         for item in state.get("items") or []:
             if not isinstance(item, dict):
                 continue
@@ -263,9 +278,9 @@ def parse_order_products(data: dict[str, Any]) -> list[OrderProduct]:
                     if not sku:
                         match = _PRODUCT_LINK_RE.search(str(action.get("link") or ""))
                         sku = match.group(1) if match else ""
-                    if not sku or sku in seen:
+                    if not sku or (sku, shipment_id or "") in seen:
                         continue
-                    seen.add(sku)
+                    seen.add((sku, shipment_id or ""))
                     price_texts = (product.get("price") or {}).get("price") or []
                     attributes = product.get("attributes") or []
                     products.append(
@@ -276,6 +291,19 @@ def parse_order_products(data: dict[str, Any]) -> list[OrderProduct]:
                             variant=next((_atom(entry) for entry in attributes if _atom(entry)), None),
                             seller=seller_name,
                             url=f"https://www.ozon.ru/product/{sku}/",
+                            order_number=order_number,
+                            shipment_id=shipment_id,
+                            shipment_status=status,
+                            received=_received(status),
                         )
                     )
     return products
+
+
+def _received(status: str | None) -> bool | None:
+    """Whether the parcel reached the buyer, from Ozon's own word for it."""
+    if not status:
+        return None
+    if status.startswith(_RECEIVED_STATUS):
+        return True
+    return False if status.startswith(_CANCELLED_STATUS) else None

@@ -4,6 +4,37 @@ Notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/).
 
+## [1.3.0] - 2026-09-02
+
+### Fixed
+
+- **A date window deep in the archive answered "nothing".** The archive is a
+  newest-first cursor, so a window has to be walked down to — but the limit
+  counted every row scanned, not the rows inside the window, so asking for July
+  2024 with a limit of 500 stopped somewhere in 2025 and reported an empty month
+  that in fact held eleven orders. The limit now counts matches, and paging ends
+  once a page is wholly older than the window.
+
+### Changed
+
+- `order_products` reports each item's parcel: `shipment_status`
+  («Получен» / «Отменён»), `received` and the order number. An order is delivered
+  in parcels with separate fates — refusing something at the pickup point cancels
+  its parcel while the rest of the order is received — and flattening them lost
+  that, so a sku appearing in two parcels is now kept once per parcel.
+- `purchases` returns `Purchase` rather than `Tile`, and its docstring says what
+  the list is: everything ever **ordered**, refusals included, with no status and
+  a catalogue price rather than the price paid.
+
+### Added
+
+- `purchases(with_status=true)` fills in each item's outcome from the orders —
+  `order_number`, `order_status`, `received` — with `scan_orders` bounding how
+  deep it looks. `received` null means "not found among the orders scanned".
+  Measured on the account it was built against: 870 orders reaching back to 2020,
+  0.16 s each, so a full sweep is about two and a half minutes; Ozon has no
+  search over orders, which is why the purchases list is used as the index.
+
 ## [1.2.1] - 2026-09-02
 
 ### Fixed
