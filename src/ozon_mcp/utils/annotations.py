@@ -43,6 +43,16 @@ PurchaseSort = Annotated[
     Literal["newest", "oldest", "cheap", "discount"],
     Field(description="Order of the purchase history. Ignored when a query is given (Ozon ranks the search)."),
 ]
+ReviewSort = Annotated[
+    Literal["useful", "best", "worst"],
+    Field(
+        description=(
+            'Order of the reviews: "useful" (Ozon\'s default, «новые и полезные»), "best" (highest scores first) '
+            'or "worst" (lowest first — Ozon has no filter by star, so this plus depth is how to read the '
+            "complaints)."
+        )
+    ),
+]
 SearchSort = Annotated[
     Literal["popular", "new", "cheap", "expensive", "rating", "discount"],
     Field(description="How Ozon should rank the results."),

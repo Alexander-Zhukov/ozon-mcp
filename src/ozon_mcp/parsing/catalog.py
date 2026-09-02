@@ -1,7 +1,9 @@
 """Parse catalog widgets into DTOs: tiles, product cards, reviews, facets."""
 
+import datetime
 import re
 from typing import Any, Final
+from zoneinfo import ZoneInfo
 
 from ozon_mcp.models.catalog import (
     Characteristic,
@@ -10,6 +12,7 @@ from ozon_mcp.models.catalog import (
     ProductCard,
     Review,
     Reviews,
+    ScoreBucket,
     SearchFilter,
     Tile,
     Variant,
@@ -41,6 +44,10 @@ def _tile_title(item: dict[str, Any]) -> str | None:
                 return text
     texts = [text for text in find_all(item, "text") if isinstance(text, str)]
     return max((text for text in texts if len(text) > 8), key=len, default=None)
+
+
+# Everything in this project is Moscow time; a review's stamp is no exception.
+MOSCOW: Final = ZoneInfo("Europe/Moscow")
 
 
 def _atom_text(atom: dict[str, Any]) -> str | None:
@@ -178,6 +185,9 @@ def parse_product(data: dict[str, Any]) -> ProductCard:
         available=price_widget.get("isAvailable") if isinstance(price_widget.get("isAvailable"), bool) else None,
         cheaper_offers=_int_or_none(best_seller.get("count")),
         cheaper_from=_from_price(best_seller),
+        rating=_as_float((widget(data, "webReviewProductScore") or {}).get("totalScore")),
+        reviews_count=_as_int((widget(data, "webReviewProductScore") or {}).get("reviewsCount")),
+        questions_count=_count_in(_atom_text(widget(data, "webQuestionCount") or {})),
         variants=variants,
         characteristics=parse_characteristics(data),
         photos=parse_gallery(data),
@@ -185,28 +195,91 @@ def parse_product(data: dict[str, Any]) -> ProductCard:
 
 
 def parse_reviews(data: dict[str, Any]) -> Reviews:
-    """Reviews from /product/<sku>/reviews/: score + individual reviews."""
-    score = [s for s in find_all(widget(data, "webReviewProductScore") or {}, "text") if isinstance(s, str)][:3]
+    """Rating and reviews from /product/<sku>/reviews/.
+
+    Every number is the one Ozon states: ``totalScore`` for the rating,
+    ``reviewsCount`` for how many there are, and the ``score`` buckets for the
+    breakdown per star. Reading "the first three strings in the score widget"
+    instead — which is what this did — answered with an empty list, and counting
+    the reviews on the page turned 155 847 of them into 30.
+
+    A card's reviews cover its variants, so each one names the variant it is
+    about; Ozon keeps that in a products map keyed by the reviewed sku.
+    """
+    score_widget = widget(data, "webReviewProductScore") or {}
+    listing = widget(data, "webListReviews") or {}
+    listed_products = listing.get("products")
+    products: dict[str, Any] = listed_products if isinstance(listed_products, dict) else {}
     reviews: list[Review] = []
     all_photos: list[str] = []
-    listing = widget(data, "webListReviews") or {}
     for review in (listing.get("reviews") if isinstance(listing, dict) else None) or []:
         if not isinstance(review, dict):
             continue
         content = review.get("content") or {}
-        text = " ".join(t for t in (content.get("comment"), content.get("positive"), content.get("negative")) if t)
-        photos = [p.get("url") for p in content.get("photos") or [] if p.get("url")]
+        photos = [photo.get("url") for photo in content.get("photos") or [] if isinstance(photo, dict)]
+        photos = [url for url in photos if isinstance(url, str)]
         all_photos += photos
+        usefulness = review.get("usefulness") if isinstance(review.get("usefulness"), dict) else {}
+        product = products.get(str(review.get("itemId") or "")) or {}
         reviews.append(
             Review(
                 author=(review.get("author") or {}).get("firstName"),
                 score=content.get("score"),
-                text=text[:800] or None,
-                date=review.get("publishedAt"),
+                text=str(content.get("comment") or "").strip()[:1200] or None,
+                positive=str(content.get("positive") or "").strip()[:600] or None,
+                negative=str(content.get("negative") or "").strip()[:600] or None,
+                date=_stamp_to_date(review.get("publishedAt") or review.get("createdAt")),
                 photos=photos,
+                useful=usefulness.get("useful"),
+                unuseful=usefulness.get("unuseful"),
+                answers=(review.get("comments") or {}).get("totalCount"),
+                variant=_variant_of(product),
+                purchased=review.get("isItemPurchased") if isinstance(review.get("isItemPurchased"), bool) else None,
             )
         )
-    return Reviews(score=score, count=len(reviews), photos=list(dict.fromkeys(all_photos)), reviews=reviews[:30])
+    total = (listing.get("paging") or {}).get("total") if isinstance(listing.get("paging"), dict) else None
+    return Reviews(
+        score=_as_float(score_widget.get("totalScore") or listing.get("productScore")),
+        count=_as_int(score_widget.get("reviewsCount") or total),
+        fetched=len(reviews),
+        distribution=_buckets(score_widget.get("score")),
+        photos=list(dict.fromkeys(all_photos)),
+        reviews=reviews,
+    )
+
+
+def _as_float(value: Any) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _as_int(value: Any) -> int | None:
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _stamp_to_date(value: Any) -> str | None:
+    """Ozon dates a review with a unix stamp; a caller reads a date."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        return None
+    return datetime.datetime.fromtimestamp(int(value), tz=MOSCOW).date().isoformat()
+
+
+def _variant_of(product: dict[str, Any]) -> str | None:
+    """The size/colour the review is about, as Ozon lists it."""
+    parts = [
+        f"{entry.get('name')}: {entry.get('value')}"
+        for entry in (product.get("variants") or [])
+        if isinstance(entry, dict) and entry.get("value")
+    ]
+    return ", ".join(parts) or None
+
+
+def _buckets(score: Any) -> list[ScoreBucket]:
+    """Reviews per star, which only the reviews page carries (the card sends null)."""
+    return [
+        ScoreBucket(stars=str(entry.get("title")), count=_as_int(entry.get("value")) or 0)
+        for entry in score or []
+        if isinstance(entry, dict) and entry.get("title")
+    ]
 
 
 def parse_description(sku: str, data: dict[str, Any]) -> Description:
@@ -414,3 +487,20 @@ def _digits_of(value: Any) -> str | None:
     """The sku inside a value that may carry a label with it."""
     found = re.search(r"\d{6,}", str(value or ""))
     return found.group(0) if found else None
+
+
+def _count_in(text: str | None) -> int | None:
+    """The number in a line like «250 вопросов»."""
+    digits = re.sub(r"\D", "", (text or "").replace("\u2009", "").replace("\u00a0", ""))
+    return int(digits) if digits else None
+
+
+def reviews_next_page(data: dict[str, Any]) -> str | None:
+    """The query Ozon offers for the next page of reviews.
+
+    It is a ready-made "?page=2&page_key=…&sort=…" — the page key is opaque and
+    tied to this walk, so it is followed rather than rebuilt.
+    """
+    paging = (widget(data, "webListReviews") or {}).get("paging")
+    following = paging.get("nextButton") if isinstance(paging, dict) else None
+    return str(following) if following else None

@@ -8,6 +8,7 @@ from urllib.parse import quote
 from ozon_mcp.constants import (
     PURCHASE_SORTS,
     PURCHASES_LIST_ID,
+    REVIEW_SORTS,
     SEARCH_SORTS,
     WEB_DELIVERY_CI,
     WEB_DELIVERY_STATE_ID,
@@ -41,6 +42,9 @@ _OFFERS_PATH: Final = "/modal/otherOffersFromSellers?product_id={sku}&sort=price
 # How far a comparison looks when the caller asked for a small top: the cheapest
 # lot of a popular product is regularly a page or two down.
 _CHEAPER_SEARCH_DEPTH: Final = 40
+# Reviews arrive thirty at a time; this bounds the walk when a caller asks for
+# a depth Ozon would happily keep serving.
+_MAX_REVIEW_PAGES: Final = 40
 # Each order opened costs a request (0.16 s), and a tool call has to finish
 # inside a client's timeout — so the default scan covers the recent months and
 # says where it stopped, rather than spending minutes to be exhaustive.
@@ -175,8 +179,41 @@ def get_photos(sku_or_url: str) -> list[str]:
     return parse.parse_gallery(get_session().fetch(f"/product/{_sku(sku_or_url)}/"))
 
 
-def get_reviews(sku_or_url: str) -> Reviews:
-    return parse.parse_reviews(get_session().fetch(f"/product/{_sku(sku_or_url)}/reviews/"))
+def get_reviews(sku_or_url: str, limit: int = 30, sort: str = "useful") -> Reviews:
+    """A product's rating, the breakdown per star, and ``limit`` reviews.
+
+    Ozon serves reviews thirty at a time and states the total separately, so the
+    depth is walked and reported: ``count`` is its total, ``fetched`` is what came
+    back. It also has no filter for "only one-star" — the way to those is
+    ``sort="worst"`` and enough depth, which is why depth is a parameter and not
+    a page number.
+
+    A card's reviews cover its variants, so a review may be about another size or
+    colour; each one says which.
+    """
+    sku = _sku(sku_or_url)
+    session = get_session()
+    path = f"/product/{sku}/reviews/?sort={REVIEW_SORTS.get(sort, sort)}"
+    data = session.fetch(path)
+    answer = parse.parse_reviews(data)
+    seen = {(review.author, review.date, review.text) for review in answer.reviews}
+    for _ in range(_MAX_REVIEW_PAGES):
+        if len(answer.reviews) >= limit:
+            break
+        following = (parse.reviews_next_page(data) or "").strip()
+        if not following:
+            break
+        data = session.fetch(f"/product/{sku}/reviews/{following}")
+        page = parse.parse_reviews(data)
+        fresh = [review for review in page.reviews if (review.author, review.date, review.text) not in seen]
+        if not fresh:
+            break
+        seen.update((review.author, review.date, review.text) for review in fresh)
+        answer.reviews += fresh
+        answer.photos = list(dict.fromkeys(answer.photos + page.photos))
+    answer.reviews = answer.reviews[:limit]
+    answer.fetched = len(answer.reviews)
+    return answer
 
 
 def get_characteristics(sku_or_url: str) -> list[parse.Characteristic]:

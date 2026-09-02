@@ -8,7 +8,7 @@ from ozon_mcp.dependencies import run_blocking
 from ozon_mcp.mcp_server import mcp
 from ozon_mcp.models.catalog import Cheaper, DeliveryEstimate, Description, ProductCard, Reviews, SearchFilter, Tile
 from ozon_mcp.services import catalog
-from ozon_mcp.utils.annotations import Limit, Page, SearchSort, SkuOrUrl
+from ozon_mcp.utils.annotations import Limit, Page, ReviewSort, SearchSort, SkuOrUrl
 
 
 @mcp.tool()
@@ -89,11 +89,19 @@ async def product_details(
 
 
 @mcp.tool()
-async def get_reviews(sku_or_url: SkuOrUrl) -> Reviews:
-    """Reviews on their own: overall score, individual reviews
-    (author/score/text/date) and review photos.
+async def get_reviews(sku_or_url: SkuOrUrl, limit: Limit = 30, sort: ReviewSort = "useful") -> Reviews:
+    """Rating and reviews: `score` (e.g. 4.9), `count` — Ozon's own total — the
+    `distribution` per star, and `limit` reviews with `fetched` saying how many
+    came back. count and fetched are different numbers: reporting the second as
+    the first turns 155 847 reviews into 30.
+    Reviews arrive thirty at a time and pages are walked to meet `limit`. There
+    is no filter by star, so the one-star ones are reached with sort="worst" plus
+    enough depth.
+    Each review keeps «Достоинства» and «Недостатки» apart from the comment,
+    carries its useful votes, and names the variant it is about — a card's
+    reviews cover its sizes and colours, so some are about a different one.
     """
-    return await run_blocking(lambda: catalog.get_reviews(sku_or_url))
+    return await run_blocking(lambda: catalog.get_reviews(sku_or_url, limit, sort))
 
 
 @mcp.tool()

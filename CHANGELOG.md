@@ -4,6 +4,31 @@ Notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/).
 
+## [1.5.0] - 2026-09-02
+
+### Fixed
+
+- **The rating was empty and the review count was wrong.** `score` was "the first
+  three strings in the score widget" and came back as an empty list, while
+  `count` was the number of reviews on the page — so a product with 155 847
+  reviews reported 30. Both now come from the fields Ozon states: `totalScore`
+  and `reviewsCount`.
+- `get_reviews` fetched the first page twice.
+
+### Added
+
+- `get_reviews(limit=…, sort="useful"|"best"|"worst")`: pages are walked to the
+  depth asked for, and the answer reports `count` (the product's total) beside
+  `fetched` (what came back). Ozon has no filter by star, so the complaints are
+  reached with "worst" plus depth.
+- `Reviews.distribution` — reviews per star, as Ozon breaks it down.
+- A review now carries «Достоинства» and «Недостатки» apart from the comment, its
+  useful votes, its reply count, whether Ozon marks the author as having bought
+  it, its date as YYYY-MM-DD rather than a unix stamp, and **the variant it is
+  about**: a card's reviews cover its sizes and colours.
+- `ProductCard.rating`, `reviews_count` and `questions_count`, read from the card
+  itself — no extra request to know how a product is rated.
+
 ## [1.4.1] - 2026-09-02
 
 ### Fixed

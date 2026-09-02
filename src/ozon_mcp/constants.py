@@ -41,6 +41,14 @@ SEARCH_SORTS: Final = {
     "rating": "rating",
     "discount": "discount",
 }
+# Friendly sort name -> Ozon's `sort=` value on the reviews page. Ozon offers no
+# filter by star, so reaching the one-star ones is "worst" plus depth.
+REVIEW_SORTS: Final = {
+    "useful": "usefulness_desc",
+    "best": "score_desc",
+    "worst": "score_asc",
+}
+
 # Friendly sort name -> `sorting=` value, for the purchases list.
 PURCHASE_SORTS: Final = {
     "newest": "new",

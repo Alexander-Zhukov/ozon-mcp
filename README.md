@@ -59,7 +59,7 @@ login — makes the others wait.
 | `search` | Storefront search by text and/or category slug, with sort, facet filters and a depth `limit` |
 | `get_search_filters` | Facets available for a query, and the values `search` takes |
 | `product_details` | Card: price, variants (each with its own sku), characteristics, photos; description and reviews on request |
-| `get_reviews` | Reviews with score, text, dates, photos |
+| `get_reviews` | Rating, review count, the breakdown per star, and reviews to any depth (`sort="worst"` for the complaints) |
 | `get_description` | Description text plus the images embedded in it |
 | `delivery_estimate` | When a product would arrive, to which address, from which warehouse |
 | `find_cheaper` | The cheapest lots of the same thing: Ozon's own other-seller offers plus a price-sorted search |
@@ -172,6 +172,14 @@ was received or cancelled — an order placed on 30 June and received on 2 July
 lands in July. The archive is a newest-first cursor, so a window is walked down
 to: the cost is the depth, not the width. A recent fortnight comes back in half a
 second; a month two years back takes tens of seconds.
+
+**A rating is a number Ozon states.** `product_details` carries `rating`,
+`reviews_count` and `questions_count`; `get_reviews` adds the per-star breakdown
+and walks pages to the depth asked for, reporting `count` (the product's total)
+beside `fetched` (what came back) — they are different numbers. Ozon offers no
+filter by star, so the one-star reviews are reached with `sort="worst"` and
+depth. A card's reviews cover its variants, so each review names the size or
+colour it is about, and «Достоинства» / «Недостатки» stay apart from the comment.
 
 **Three prices, and only one of them is charged.** A card states `price` («С
 банками» — what the account pays), `price_regular` («С другими банками») and

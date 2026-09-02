@@ -65,6 +65,14 @@ product_details() — a tile's title is the seller's wording and may name no mod
 Ozon finds nothing exact for returns nothing rather than the "you might also like" it fills the
 page with. find_cheaper adds Ozon's own «Есть дешевле или быстрее» offers for that product.
 
+A rating and a review count are Ozon's own numbers: product_details() carries rating,
+reviews_count and questions_count, and get_reviews() adds the breakdown per star plus as many
+reviews as `limit` asks for. count is the product's total and fetched is what came back — quoting
+the second as the first turns 155 847 reviews into 30. There is no filter by star, so the
+complaints are reached with sort="worst" and depth; each review keeps «Достоинства» and
+«Недостатки» apart and names the variant it is about, because a card's reviews cover its sizes
+and colours.
+
 list_orders() dates are status dates — when an order was received or cancelled, the only dates the
 archive prints — and a range is walked down to, so the cost is the depth, not the width.
 

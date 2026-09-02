@@ -93,16 +93,50 @@ class Characteristic(OzonModel):
 
 
 class Review(OzonModel):
+    """One review, as its author left it.
+
+    Ozon keeps «Достоинства» and «Недостатки» apart from the comment, so they
+    stay apart here: merged into one blob, a complaint reads as praise.
+    """
+
     author: str | None = None
-    score: int | None = None
+    score: int | None = Field(default=None, description="Stars this author gave, 1-5.")
     text: str | None = None
-    date: int | None = None
+    positive: str | None = Field(default=None, description="«Достоинства», as written.")
+    negative: str | None = Field(default=None, description="«Недостатки», as written.")
+    date: str | None = Field(default=None, description="When it was published, YYYY-MM-DD.")
     photos: list[str] = Field(default_factory=list)
+    useful: int | None = Field(default=None, description="How many found it useful.")
+    unuseful: int | None = None
+    answers: int | None = Field(default=None, description="Replies under it, the seller's included.")
+    variant: str | None = Field(
+        default=None,
+        description="Which variant it is about — Ozon shows one card's reviews across its sizes and colours.",
+    )
+    purchased: bool | None = Field(default=None, description="Whether Ozon marks the author as having bought it.")
+
+
+class ScoreBucket(OzonModel):
+    """How many people gave this many stars."""
+
+    stars: str
+    count: int
 
 
 class Reviews(OzonModel):
-    score: list[str] = Field(default_factory=list)
-    count: int = 0
+    """A product's rating and as many of its reviews as were asked for.
+
+    ``count`` is Ozon's own total and ``fetched`` is how many are in this
+    answer — the two are not the same number, and reporting the second as the
+    first turned 155 847 reviews into "30".
+    """
+
+    score: float | None = Field(default=None, description="The rating Ozon prints, e.g. 4.9.")
+    count: int | None = Field(default=None, description="How many reviews the product has, by Ozon's count.")
+    fetched: int = Field(default=0, description="How many are in this answer.")
+    distribution: list[ScoreBucket] = Field(
+        default_factory=list, description="Reviews per star rating; only the reviews page states it."
+    )
     photos: list[str] = Field(default_factory=list)
     reviews: list[Review] = Field(default_factory=list)
 
@@ -122,6 +156,9 @@ class ProductCard(OzonModel):
     price_regular: str | None = Field(default=None, description="Ozon's «С другими банками» price.")
     price_old: str | None = Field(default=None, description="The struck-through price Ozon compares against.")
     available: bool | None = Field(default=None, description="Whether Ozon offers it for sale at all.")
+    rating: float | None = Field(default=None, description="The rating Ozon prints on the card, e.g. 4.9.")
+    reviews_count: int | None = Field(default=None, description="How many reviews it has; get_reviews() reads them.")
+    questions_count: int | None = Field(default=None, description="How many questions were asked about it.")
     cheaper_offers: int | None = Field(
         default=None,
         description="How many other-seller offers Ozon counts for this product; find_cheaper() lists them.",
