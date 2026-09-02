@@ -4,6 +4,19 @@ Notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/).
 
+## [1.4.1] - 2026-09-02
+
+### Fixed
+
+- The instructions a client is handed on connect said nothing about the purchase
+  history, the three prices or how Ozon's text search behaves — all of it lived
+  only in the tool descriptions and the README, and an agent that had read the
+  instructions still got each of them wrong in turn. They now carry: what
+  «Купленные товары» is and is not, the bought_items loop with its coverage
+  fields, that «С банками» is the charged price, that search's limit is depth and
+  its matching is literal about brand words, and that order dates are status
+  dates.
+
 ## [1.4.0] - 2026-09-02
 
 ### Changed

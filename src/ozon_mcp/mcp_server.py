@@ -55,6 +55,32 @@ list_orders() states no order total, because Ozon states none. A row carries amo
 is not the order's; paid null means unknown, not unpaid. "active" leaves out the received and
 cancelled orders Ozon shows among the current ones; state says which is which.
 
+A product card states three prices and only one is charged: price is «С банками» — what this
+account pays — beside price_regular («С другими банками») and price_old. Rank lots on the first;
+search(sort="cheap") and find_cheaper already do. In search, limit is depth, not page size —
+pages are walked until it is met, and the cheapest lot is regularly not on the first one. Ozon's
+text search is literal: a lot whose own title omits the brand does not come back for a query that
+includes it, so search the model rather than brand-plus-model, and confirm what a lot is with
+product_details() — a tile's title is the seller's wording and may name no model at all. A query
+Ozon finds nothing exact for returns nothing rather than the "you might also like" it fills the
+page with. find_cheaper adds Ozon's own «Есть дешевле или быстрее» offers for that product.
+
+list_orders() dates are status dates — when an order was received or cancelled, the only dates the
+archive prints — and a range is walked down to, so the cost is the depth, not the width.
+
+«Купленные товары» (purchases) is a list of what was ordered, not of what arrived: it includes
+items refused at the pickup point, states no status and prices them at today's catalogue price.
+bought_items() answers "did I actually get this" by matching it against the orders, where the
+outcome lives per parcel — one order holds «Получен» and «Отменён» at once. Each order opened is
+a request, so bought_items is bounded and reports its own reach: scanned_orders,
+scanned_back_to, complete, unresolved (never seen) and provisional (seen only as cancelled — an
+older order may have been received, so it is not an answer yet). Keep looking by asking about the
+leftovers, not by raising the bound:
+  bought_items(skus=<unresolved + provisional>, scan_before=<scanned_back_to>)
+repeated until complete, merging by sku and preferring received. Never report unresolved as "not
+bought" — it means nobody looked that far back. Budget: a first call with a query ~40-50 s, each
+continuation of 150 orders ~30 s.
+
 A failure never arrives as an empty result: a 502, a timeout or a rate limit raises, because "no
 orders" and "Ozon did not answer" are different answers. Every error carries a code before its
 sentence — [upstream_unavailable], [rate_limited], [session_expired], [writes_disabled],
