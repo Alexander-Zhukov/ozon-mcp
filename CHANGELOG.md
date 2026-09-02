@@ -4,6 +4,30 @@ Notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/).
 
+## [1.4.0] - 2026-09-02
+
+### Changed
+
+- `purchases(with_status=…)` is replaced by **`bought_items`**, because the
+  answer has to carry its own coverage. Resolving a purchase against the orders
+  costs a request per order, so any bounded scan is partial — and a plain list
+  cannot say how far it looked, which is how a client timed out on a full sweep
+  and then reported one confirmed item as if that were the finding.
+  `bought_items` returns the items plus `scanned_orders`, `scanned_back_to`,
+  `complete`, `unresolved` and `provisional`.
+- `bought_items(skus=[…])` asks about named products only, skipping the purchase
+  index — the cheap way to continue further back. Continuing by repeating the
+  query with `scan_before` alone does not work and is documented as such: the
+  items already placed live in newer orders, so they come back unresolved.
+
+### Fixed
+
+- «Отменён» was treated as final. The scan stopped at the first order holding a
+  sku, so a jogger refused in August was reported as never received although an
+  order from February had it as «Получен». Only a receipt settles a sku now;
+  cancelled-only ones come back as `provisional`, and a stepwise walk reproduces
+  the exhaustive one exactly (11 received, 17 refused, 1 absent from 870 orders).
+
 ## [1.3.0] - 2026-09-02
 
 ### Fixed

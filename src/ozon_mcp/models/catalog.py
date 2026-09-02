@@ -40,6 +40,36 @@ class Purchase(Tile):
     )
 
 
+class BoughtItems(OzonModel):
+    """What the orders say was bought, and how far the answer looked.
+
+    The coverage is part of the answer on purpose: the archive is a newest-first
+    cursor and each order costs a request, so any bounded scan is partial. Left
+    unsaid, "nothing older found" is indistinguishable from "did not look that
+    far" — which is exactly how 29 items became "all bought".
+    """
+
+    items: list[Purchase] = Field(default_factory=list)
+    scanned_orders: int = Field(default=0, description="How many orders were opened for this answer.")
+    scanned_back_to: str | None = Field(
+        default=None, description="Status date of the oldest order scanned; everything older was not looked at."
+    )
+    complete: bool = Field(
+        default=False,
+        description="True when every item is settled — found received, or the scan reached the end of the archive.",
+    )
+    unresolved: list[str] = Field(
+        default_factory=list, description="Skus not found in any order scanned — nobody looked far enough back."
+    )
+    provisional: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Skus seen only as «Отменён» so far. Not an answer to «did I ever get it»: an earlier order may have "
+            "been received, so keep looking with these too."
+        ),
+    )
+
+
 class VariantOption(OzonModel):
     """One value of a product aspect — itself a purchasable SKU."""
 

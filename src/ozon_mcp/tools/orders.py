@@ -6,7 +6,7 @@ from pydantic import Field
 
 from ozon_mcp.dependencies import run_blocking
 from ozon_mcp.mcp_server import mcp
-from ozon_mcp.models.catalog import Purchase
+from ozon_mcp.models.catalog import BoughtItems, Purchase
 from ozon_mcp.models.orders import Order, OrderProduct, Return
 from ozon_mcp.services import catalog, orders
 from ozon_mcp.utils.annotations import IsoDate, Limit, OrderRef, OrderScope, PurchaseSort
@@ -61,22 +61,6 @@ async def purchases(
     ] = None,
     limit: Limit = 100,
     sort: PurchaseSort = "newest",
-    with_status: Annotated[
-        bool,
-        Field(
-            description="Also say whether each item was actually received, by matching it against the orders. "
-            "Costs one request per order scanned — slow, so ask for it only when the outcome matters."
-        ),
-    ] = False,
-    scan_orders: Annotated[
-        int,
-        Field(
-            ge=1,
-            le=1000,
-            description="How many orders deep with_status looks, newest first. Each costs a request; the archive can "
-            "reach back years, so an old purchase needs a bigger number.",
-        ),
-    ] = 300,
 ) -> list[Purchase]:
     """Everything ever **ordered**, as product tiles (sku/title/price/url) — the
     answer to "have I bought this before" and "buy that thing again".
@@ -84,19 +68,66 @@ async def purchases(
     outcomes: it includes items refused at the pickup point, and it states no
     status, no order and no purchase date. So it does not answer "did I actually
     get this" — do not read it as "bought".
-    with_status=true answers that, by matching each item against the orders and
-    reporting the parcel's own outcome: `received` true when a parcel with it was
-    «Получен», false when every one was «Отменён», null when the item was not
-    found among the orders scanned (which is not "not received"). It costs one
-    request per order, so it is slow.
+    For "did I actually get this" use bought_items(), which matches the list
+    against the orders.
     `price` is today's catalogue price, not what was paid; the price paid is in
     order_products().
     With `query` Ozon searches its own purchase history server-side, which is
     much cheaper than paging through all of it.
     """
-    return await run_blocking(
-        lambda: catalog.purchases(query, limit, sort, with_status=with_status, scan_orders=scan_orders)
-    )
+    return await run_blocking(lambda: catalog.purchases(query, limit, sort))
+
+
+@mcp.tool()
+async def bought_items(
+    query: Annotated[
+        str | None,
+        Field(description="Text to look for in the purchase history; omit to take it in order, newest first."),
+    ] = None,
+    skus: Annotated[
+        list[str] | None,
+        Field(
+            description="Ask about these products only — the `unresolved` of a previous answer. Skips the purchase "
+            "index, so it is the cheap way to keep looking further back."
+        ),
+    ] = None,
+    limit: Limit = 100,
+    scan_orders: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=1000,
+            description="How many orders to open, newest first. Each is a request, so this is the cost: 50 orders "
+            "take roughly fifteen seconds, the whole archive minutes.",
+        ),
+    ] = 50,
+    scan_before: IsoDate | None = None,
+) -> BoughtItems:
+    """What was actually received, not merely ordered — the honest answer to
+    "have I bought this".
+    Matches Ozon's purchase list (its only text index over the whole history)
+    against the orders, where the outcome lives: per item `received` true when a
+    parcel with it was «Получен», false when every one was «Отменён», null when
+    it was not found in the orders scanned.
+    The answer says how far it looked — `scanned_orders`, `scanned_back_to`,
+    `complete` and the `unresolved` skus. It is bounded because each order costs
+    a request and a full sweep of an old account takes minutes.
+    «Отменён» is not the end of it: `provisional` lists items seen only as
+    cancelled, because an older order may have been received — carry them on with
+    `unresolved` when you continue.
+    To keep looking, call again with skus=<unresolved + provisional> and
+    scan_before=<scanned_back_to>, then merge by sku, preferring received. Do not
+    simply raise scan_orders: that re-reads what was already covered. And do not
+    repeat the query with scan_before alone — the items it already placed live in
+    newer orders, so they would come back unresolved.
+    Budget: with a query the first call takes about 40 s (the purchase index
+    alone is ~20 s) and each continuation of 150 orders about 30 s. If your
+    client's timeout is shorter, call purchases() for the skus first and then
+    bought_items(skus=…) in chunks.
+    Never report an unresolved sku as "not bought": it means nobody looked that
+    far back.
+    """
+    return await run_blocking(lambda: catalog.bought_items(query, skus, limit, scan_orders, scan_before))
 
 
 @mcp.tool()

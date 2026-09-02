@@ -48,7 +48,8 @@ login — makes the others wait.
 |---|---|
 | `list_orders` | Orders (active / archive / all), each with its `order_number`, status, state, pickup point, slot, what is owed on collection and per-item payment state; optionally within an ISO date range |
 | `order_products` | Items of one order: sku, title, price paid, variant, seller, and each item's parcel status |
-| `purchases` | Everything ever **ordered**, as product tiles; with a query, Ozon's own search over the whole history; `with_status` says what was actually received |
+| `purchases` | Everything ever **ordered**, as product tiles; with a query, Ozon's own search over the whole history |
+| `bought_items` | What was actually received: the purchase list matched against the orders, with the coverage of the scan |
 | `list_returns` | Returns: number, date, status, amount, the products going back |
 
 **Catalog**
@@ -159,9 +160,11 @@ states no order, no date and no status; its price is today's catalogue price, no
 what was paid. On the account this was built against, 17 of 29 items matching one
 query had been ordered and never taken home. The outcome lives in the orders: an
 order is delivered in parcels with separate fates, so `order_products` reports
-`shipment_status` and `received` per item, and `purchases(with_status=true)`
-matches the list against the orders to fill them in. `received` null means "not
-found among the orders scanned", not "not received".
+`shipment_status` and `received` per item, and `bought_items` matches the
+list against the orders to fill them in, and its answer states how far it looked:
+each order costs a request, so a bounded scan is partial and says so —
+`unresolved` is "never seen in the orders scanned", `provisional` is "seen only
+as cancelled, an older order may have been received".
 
 **An order's dates are status dates.** The archive prints only «Получен 11
 августа» / «Отменён 12 февраля 2021», so a date range filters on when an order

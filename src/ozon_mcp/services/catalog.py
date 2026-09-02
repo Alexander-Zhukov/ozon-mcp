@@ -15,6 +15,7 @@ from ozon_mcp.constants import (
 from ozon_mcp.dependencies import get_session
 from ozon_mcp.errors import OzonError
 from ozon_mcp.models.catalog import (
+    BoughtItems,
     Cheaper,
     DeliveryEstimate,
     Description,
@@ -40,10 +41,10 @@ _OFFERS_PATH: Final = "/modal/otherOffersFromSellers?product_id={sku}&sort=price
 # How far a comparison looks when the caller asked for a small top: the cheapest
 # lot of a popular product is regularly a page or two down.
 _CHEAPER_SEARCH_DEPTH: Final = 40
-# Resolving a purchase to its order costs one request per order, and the history
-# runs into the hundreds — deep enough to cover a year, bounded so one call
-# cannot walk the whole account.
-_ORDER_SCAN_LIMIT: Final = 300
+# Each order opened costs a request (0.16 s), and a tool call has to finish
+# inside a client's timeout — so the default scan covers the recent months and
+# says where it stopped, rather than spending minutes to be exhaustive.
+_ORDER_SCAN_LIMIT: Final = 50
 
 
 _DELIVERY_JS: Final = r"""() => {
@@ -341,14 +342,7 @@ def _paginate_tiles(path: str, limit: int, backend: str = "composer", counter: s
     return tiles[:target]
 
 
-def purchases(
-    query: str | None = None,
-    limit: int = 100,
-    sort: str = "newest",
-    *,
-    with_status: bool = False,
-    scan_orders: int = _ORDER_SCAN_LIMIT,
-) -> list[Purchase]:
+def purchases(query: str | None = None, limit: int = 100, sort: str = "newest") -> list[Purchase]:
     """Purchase history — everything ever ordered, or just what matches a query.
 
     Ozon has a dedicated server-side search over purchases which is far cheaper
@@ -360,13 +354,8 @@ def purchases(
     status. Читая его одного, "куплено" is an assumption, and on this account a
     wrong one: two of the items in it came from an order Ozon shows as «Отменён».
 
-    ``with_status`` therefore goes to the orders, where the outcome actually
-    lives, and matches every sku against them. That costs one request per order
-    scanned, so it is off by default and bounded by ``scan_orders`` — an item not
-    found within the bound comes back with ``received`` None, which means "not
-    found", not "not received". The bound matters: this account's archive reaches
-    back to 2020 and holds 870 orders, so the default covers the recent ones and
-    an old purchase needs a deeper scan.
+    What it does not say is what became of any of it, so it does not answer
+    "did I get this" — bought_items() does.
     """
     if query:
         found = _paginate_tiles(f"/my/purchases/search?text={quote(query, safe='')}", limit, backend="entrypoint")
@@ -374,40 +363,90 @@ def purchases(
         value = PURCHASE_SORTS.get(sort, sort)
         path = f"/my/favorites/list?list={PURCHASES_LIST_ID}" + (f"&sorting={value}" if value else "")
         found = _paginate_tiles(path, limit)
-    bought = [Purchase(**tile.model_dump()) for tile in found]
-    if with_status:
-        _attach_order_status(bought, scan_orders)
-    return bought
+    return [Purchase(**tile.model_dump()) for tile in found]
 
 
-def _attach_order_status(bought: list[Purchase], scan_orders: int) -> None:
-    """Fill each purchase's outcome from the orders it appears in.
+def bought_items(
+    query: str | None = None,
+    skus: list[str] | None = None,
+    limit: int = 100,
+    scan_orders: int = _ORDER_SCAN_LIMIT,
+    scan_before: str | None = None,
+) -> BoughtItems:
+    """What was actually received, by matching the purchase list against the orders.
 
-    Newest orders first, stopping as soon as every sku has been placed: the
-    history is long, and each order costs a request. A sku found in several
-    parcels counts as received if any of them was — that is what "I have it"
-    means when one of two was refused.
+    Two sources, because neither is enough alone: Ozon's «Купленные товары» is
+    the only text index over the whole history (there is no search over orders),
+    and the orders are the only place an outcome exists.
+
+    Every order opened costs a request, and this account's archive holds 870 of
+    them, so a full sweep runs into minutes and a client times out on it. Hence
+    the scan is bounded and the answer says how far it looked: ``scanned_orders``,
+    ``scanned_back_to`` and the skus still ``unresolved``.
+
+    Going deeper is done by asking about the leftovers rather than by re-running
+    the whole thing: pass ``skus`` — the ``unresolved`` of the previous answer —
+    with ``scan_before=<scanned_back_to>``. That skips the index entirely and
+    scans only older orders. Re-running with a bigger bound instead re-reads what
+    was already covered, and a continuation that carried the query alone came
+    back with every sku unresolved, because the ones it had placed live in orders
+    newer than the window.
+
+    A sku found in several parcels counts as received if any of them was, which
+    is what "I have it" means when one of two was refused.
     """
     from ozon_mcp.services.orders import list_orders  # ruff: ignore[import-outside-top-level] - avoids a cycle
 
-    wanted = {purchase.sku: purchase for purchase in bought if purchase.sku}
+    found = (
+        [Purchase(sku=str(sku), url=f"https://www.ozon.ru/product/{sku}/") for sku in skus]
+        if skus
+        else purchases(query, limit)
+    )
+    wanted = {purchase.sku: purchase for purchase in found if purchase.sku}
     if not wanted:
-        return
+        return BoughtItems(items=found, complete=True)
+
+    rows = (
+        list_orders("completed", limit=scan_orders, date_to=scan_before)
+        if scan_before
+        else list_orders("all", limit=scan_orders)
+    )
     numbers: list[str] = []
-    for row in list_orders("all", limit=scan_orders):
+    for row in rows:
         for number in row.order_numbers or ([row.order_number] if row.order_number else []):
             if number not in numbers:
                 numbers.append(number)
-    unresolved = set(wanted)
+
+    # "Refused" is not an answer to "did I ever get it": the same product may
+    # have been received in an older order, and stopping at the first match got
+    # exactly that wrong — a jogger refused in August had been received in
+    # February, and the scan never looked. Only a receipt settles a sku.
+    settled: set[str] = set()
+    seen: set[str] = set()
+    scanned = 0
+    oldest: str | None = None
+    dates = {number: row.date for row in rows for number in row.order_numbers or []}
     for number in numbers[:scan_orders]:
+        scanned += 1
+        oldest = dates.get(number) or oldest
         for product in order_products(number):
             purchase = wanted.get(product.sku)
-            if purchase is None:
+            if purchase is None or product.sku in settled:
                 continue
-            if purchase.received is not True:
-                purchase.order_number = product.order_number or number
-                purchase.order_status = product.shipment_status
-                purchase.received = product.received
-            unresolved.discard(product.sku)
-        if not unresolved:
+            seen.add(product.sku)
+            purchase.order_number = product.order_number or number
+            purchase.order_status = product.shipment_status
+            purchase.received = product.received
+            if product.received is True:
+                settled.add(product.sku)
+        if settled == set(wanted):
             break
+    exhausted = scanned < scan_orders  # the archive ran out before the bound did
+    return BoughtItems(
+        items=found,
+        scanned_orders=scanned,
+        scanned_back_to=oldest,
+        complete=settled == set(wanted) or exhausted,
+        unresolved=sorted(set(wanted) - seen),
+        provisional=sorted(seen - settled),
+    )
