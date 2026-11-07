@@ -11,16 +11,18 @@ class SessionStatus(OzonModel):
     automatically, so a signed-out session with a backup usually recovers
     without anyone being asked for a code.
 
-    The two ``*_enabled`` flags are the operator's settings, not something a
-    caller can change. They are reported here so that a plan can be made before
-    a tool refuses halfway through it: with ``writes_enabled`` false nothing in
-    the account can be changed, and with ``orders_enabled`` false an order can
-    be composed and priced but not placed.
+    The ``*_enabled`` flags are the operator's permissions, not something a
+    caller can change. ``cart_enabled`` permits quantity and selection changes;
+    ``writes_enabled`` also permits favorites, lists, checkout options,
+    cancellations and existing-order payments. ``orders_enabled`` independently
+    permits placing an order. They are reported before a tool refuses halfway
+    through a plan.
     """
 
     signed_in: bool = False
     user_id: str | None = None
     backup_available: bool = False
+    cart_enabled: bool = False
     writes_enabled: bool = False
     orders_enabled: bool = False
     detail: str | None = None

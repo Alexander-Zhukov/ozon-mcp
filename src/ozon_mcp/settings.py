@@ -27,11 +27,19 @@ class OzonSettings(BaseSettings):
     impersonate: str = "chrome124"
     """curl_cffi TLS-impersonation profile for direct HTTP requests."""
 
+    enable_cart: bool = False
+    """Allow cart quantity and selection changes without other account writes."""
+
     enable_writes: bool = False
-    """Allow account-mutating tools (cart / favorites / lists)."""
+    """Allow broad account writes, including cart, checkout options and payments."""
 
     enable_orders: bool = False
     """Allow place_order. Separate from enable_writes: this one spends money."""
+
+    @property
+    def cart_enabled(self) -> bool:
+        """Effective cart permission, preserving the existing broad write flag."""
+        return self.enable_cart or self.enable_writes
 
     monitor_store: Path = Path("/data/price_history.json")
     """Where favorites price-monitoring snapshots are persisted."""

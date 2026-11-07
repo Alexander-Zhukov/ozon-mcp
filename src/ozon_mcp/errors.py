@@ -28,6 +28,9 @@ class ErrorCode(StrEnum):
     WRITES_DISABLED = "writes_disabled"
     """The operator has not allowed account changes. No tool can change that."""
 
+    CART_DISABLED = "cart_disabled"
+    """The operator has not allowed cart changes. No tool can change that."""
+
     ORDERS_DISABLED = "orders_disabled"
     """The operator has not allowed placing orders. No tool can change that."""
 
@@ -98,9 +101,25 @@ class WritesDisabledError(OzonError):
 
     def __init__(self) -> None:
         super().__init__(
-            "Account-mutating tools are disabled: the cart, favorites and lists cannot be changed. "
+            "Broad account changes are disabled: favorites, lists, checkout options, cancellations "
+            "and payments for existing orders are not allowed. "
             "This is the operator's setting (OZON_ENABLE_WRITES=1) and no tool can change it — "
-            "say so instead of retrying, and read session_status() to see both gates upfront."
+            "say so instead of retrying, and read session_status() to see the permissions upfront."
+        )
+
+
+class CartDisabledError(WritesDisabledError):
+    """Cart writes are disabled; remains catchable as a disabled-write error."""
+
+    code = ErrorCode.CART_DISABLED
+
+    def __init__(self) -> None:
+        OzonError.__init__(
+            self,
+            "Cart changes are disabled. The operator can allow only cart quantity and selection "
+            "changes with OZON_ENABLE_CART=1; OZON_ENABLE_WRITES=1 also permits other account changes. "
+            "No tool can change these settings — report this instead of retrying, and read "
+            "session_status() to see the permissions upfront.",
         )
 
 

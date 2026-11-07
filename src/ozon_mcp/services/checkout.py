@@ -19,7 +19,7 @@ from typing import Any, Final
 from uuid import uuid4
 
 from ozon_mcp.dependencies import get_session
-from ozon_mcp.errors import OrdersDisabledError, OzonError, TotalMismatchError
+from ozon_mcp.errors import OrdersDisabledError, OzonError, TotalMismatchError, WritesDisabledError
 from ozon_mcp.models.checkout import Checkout, Delivery, OrderPlaced, PaymentOption, PickupPoint
 from ozon_mcp.models.enums import PostPaymentScope
 from ozon_mcp.parsing.checkout import (
@@ -342,6 +342,8 @@ def configure_checkout(
     change what payment is possible), then payment, then the pay-on-delivery
     switch, then points.
     """
+    if not get_settings().enable_writes:
+        raise WritesDisabledError
     # Same entry point as get_checkout: Ozon may not have formed the order yet,
     # and a plain read of an unformed checkout reports every option as absent.
     checkout = get_checkout()

@@ -4,6 +4,22 @@ Notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `OZON_ENABLE_CART` permits only cart quantity and selection changes, without
+  payments, cancellations or other account writes. `OZON_ENABLE_WRITES` retains
+  its broad behavior, including cart access; `session_status` and login responses
+  now report the effective `cart_enabled` permission.
+- `[cart_disabled]` distinguishes refused cart changes from broad write refusals.
+
+### Fixed
+
+- `configure_checkout` now checks `OZON_ENABLE_WRITES` before any upstream work.
+  MCP descriptions and configuration examples explicitly identify existing-order
+  payments as part of the broad write permission.
+
 ## [1.5.0] - 2026-09-02
 
 ### Fixed

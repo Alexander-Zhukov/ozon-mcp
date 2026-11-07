@@ -19,10 +19,13 @@ INSTRUCTIONS: Final = """Read-write access to one ozon.ru buyer account: orders,
 favorites, collections, product cards, catalog search, checkout, Ozon Card balance and points.
 Everything acts on the signed-in account of a real person, and money is real.
 
-Start with session_status(). It answers three things you cannot guess: whether the session is
-alive, whether you may change anything (writes_enabled) and whether you may place an order
-(orders_enabled). Those two are the operator's settings — no tool can change them, so plan
-around them instead of discovering them halfway through.
+Start with session_status(). It reports whether the session is alive and three permissions:
+cart_enabled permits only cart quantity and selection changes; writes_enabled also permits
+favorites, lists, checkout options, cancellations and payments for existing orders;
+orders_enabled independently permits placing an order. The operator controls them — no tool can
+change them. OZON_ENABLE_CART=1 with OZON_ENABLE_WRITES=0 and OZON_ENABLE_ORDERS=0 permits only
+cart changes. The broad write flag also permits cart changes for compatibility. Plan around
+these permissions instead of discovering them halfway through.
 
 Buying, in order — each step is a precondition for the next:
   1. find the product: search() -> product_details() and take the SKU of the exact variant
@@ -92,7 +95,7 @@ continuation of 150 orders ~30 s.
 A failure never arrives as an empty result: a 502, a timeout or a rate limit raises, because "no
 orders" and "Ozon did not answer" are different answers. Every error carries a code before its
 sentence — [upstream_unavailable], [rate_limited], [session_expired], [writes_disabled],
-[orders_disabled], [total_mismatch]. Branch on the code; relay the sentence, which is written for
+[cart_disabled], [orders_disabled], [total_mismatch]. Branch on the code; relay the sentence, which is written for
 a person. A signed-out session raises everywhere rather than answering with an empty account:
 recover with start_login(login) and submit_login_code(code), which needs a code only the account
 owner receives — so ask, never guess.

@@ -13,9 +13,11 @@ from ozon_mcp.services import session
 @mcp.tool()
 async def session_status() -> SessionStatus:
     """Start here. Reports whether the stored session still acts as the account
-    and what this server is allowed to do: writes_enabled covers cart,
-    favorites and lists, orders_enabled covers placing an order. Both are the
-    operator's settings and no tool can change them — plan around them.
+    and what this server is allowed to do: cart_enabled covers cart quantities
+    and selection; writes_enabled also covers favorites, lists, checkout
+    options, cancellations and existing-order payments; orders_enabled covers
+    placing an order independently. These are the operator's permissions and
+    no tool can change them — plan around them.
     When signed_in is false, every other tool raises instead of answering,
     because a signed-out session otherwise looks exactly like an empty account:
     no orders, no balances, no explanation. Recovery is start_login() +

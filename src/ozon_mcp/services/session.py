@@ -28,12 +28,14 @@ def session_status() -> SessionStatus:
             signed_in=True,
             user_id=user,
             backup_available=backup,
+            cart_enabled=settings.cart_enabled,
             writes_enabled=settings.enable_writes,
             orders_enabled=settings.enable_orders,
         )
     return SessionStatus(
         signed_in=False,
         backup_available=backup,
+        cart_enabled=settings.cart_enabled,
         writes_enabled=settings.enable_writes,
         orders_enabled=settings.enable_orders,
         detail=(
@@ -63,6 +65,7 @@ def submit_login_code(code: str) -> SessionStatus:
             signed_in=False,
             backup_available=session.has_backup(),
             detail="the code was not accepted; request a new one with start_login()",
+            cart_enabled=settings.cart_enabled,
             writes_enabled=settings.enable_writes,
             orders_enabled=settings.enable_orders,
         )
@@ -71,6 +74,7 @@ def submit_login_code(code: str) -> SessionStatus:
         user_id=session.signed_in_user(),
         backup_available=session.has_backup(),
         detail="signed in; the profile was backed up",
+        cart_enabled=settings.cart_enabled,
         writes_enabled=settings.enable_writes,
         orders_enabled=settings.enable_orders,
     )

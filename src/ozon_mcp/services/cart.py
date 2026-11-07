@@ -15,7 +15,7 @@ something is ticked.
 from typing import Any, Final
 
 from ozon_mcp.dependencies import get_session
-from ozon_mcp.errors import OzonError, WritesDisabledError
+from ozon_mcp.errors import CartDisabledError, OzonError
 from ozon_mcp.models.cart import Cart, CartItem
 from ozon_mcp.models.common import WriteResult
 from ozon_mcp.parsing.cart import parse_cart
@@ -35,9 +35,9 @@ _SELECT_ALL: Final = "MODE_SELECT_ALL"
 SELECTION_MODES: Final = ("only", "add", "remove", "all", "none")
 
 
-def _require_writes() -> None:
-    if not get_settings().enable_writes:
-        raise WritesDisabledError
+def _require_cart() -> None:
+    if not get_settings().cart_enabled:
+        raise CartDisabledError
 
 
 def get_cart() -> Cart:
@@ -84,7 +84,7 @@ def set_cart_quantity(sku: str, quantity: int) -> WriteResult:
     ordinary mistakes are exactly the silent ones — a base apparel SKU with no
     size chosen, a product out of stock — so the cart is what settles it.
     """
-    _require_writes()
+    _require_cart()
     get_session().action("v2/addToCart", [{"id": int(sku), "quantity": quantity}])
     found = next((item for item in get_cart().items if item.id == str(sku)), None)
     in_cart = found.quantity if found else 0
@@ -117,7 +117,7 @@ def select_cart_items(skus: list[str] | None = None, mode: str = "only") -> Cart
     actually asks for, and it should not require unticking everything else by
     hand. The other modes map straight onto Ozon's own commands.
     """
-    _require_writes()
+    _require_cart()
     if mode not in SELECTION_MODES:
         msg = f"unknown mode {mode!r}; use one of {', '.join(SELECTION_MODES)}"
         raise OzonError(msg)

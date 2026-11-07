@@ -29,6 +29,8 @@ GATED_TOOLS = (
     "set_list_membership",
     "place_order",
     "cancel_order",
+    "configure_checkout",
+    "pay_order",
 )
 
 
@@ -71,6 +73,15 @@ async def test_gated_tools_say_so_before_they_are_called() -> None:
     by_name = {tool.name: tool.description or "" for tool in await mcp.list_tools()}
     for name in GATED_TOOLS:
         assert "GATED" in by_name[name], name
+
+
+async def test_cart_tools_advertise_the_narrow_permission() -> None:
+    by_name = {tool.name: tool.description or "" for tool in await mcp.list_tools()}
+    for name in ("set_cart_quantity", "select_cart_items"):
+        assert "cart_enabled" in by_name[name]
+    for name in ("configure_checkout", "pay_order", "cancel_order"):
+        assert "writes_enabled" in by_name[name]
+    assert "cart_enabled" in (mcp.instructions or "")
 
 
 async def test_money_tools_name_the_figure_to_quote() -> None:

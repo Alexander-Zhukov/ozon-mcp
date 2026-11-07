@@ -118,10 +118,22 @@ login — makes the others wait.
 | `get_finances` | Ozon Card balance and total points |
 | `get_points` | Points by type, burning points, per-store seller bonuses |
 
-Changing the account is off by default. `OZON_ENABLE_WRITES=1` allows the cart,
-favorites, lists and cancellations; `OZON_ENABLE_ORDERS=1` allows `place_order`
-and is separate because it spends money. `session_status` reports both, so a
-caller can plan around them instead of finding out halfway through.
+Changing the account is off by default. `OZON_ENABLE_CART=1` allows only cart
+quantity and selection changes. For cart-only access, use:
+
+```dotenv
+OZON_ENABLE_CART=1
+OZON_ENABLE_WRITES=0
+OZON_ENABLE_ORDERS=0
+```
+
+`OZON_ENABLE_WRITES=1` remains the broad permission: it allows the cart,
+favorites, lists, selections, checkout configuration, cancellations and **payments
+for existing orders**. `OZON_ENABLE_ORDERS=1` independently allows `place_order`,
+which can spend money immediately. `session_status` reports the effective
+`cart_enabled` permission alongside `writes_enabled` and `orders_enabled`.
+Reading and pricing a checkout with `get_checkout` remains available with all
+flags off; changing its options requires the broad write permission.
 
 ## What a caller needs to know
 
@@ -226,7 +238,8 @@ different answers.
 | `OZON_PROFILE_BACKUP` | `/data/profile.backup` | Copy of a known-good profile, restored on a sign-out |
 | `OZON_STATE_PATH` | `/data/state.json` | Legacy cookie snapshot, imported once to seed a new profile |
 | `OZON_IMPERSONATE` | `chrome124` | curl_cffi TLS-impersonation profile |
-| `OZON_ENABLE_WRITES` | `0` | Allow cart / favorites / list / cancellation changes |
+| `OZON_ENABLE_CART` | `0` | Allow only cart quantity and selection changes |
+| `OZON_ENABLE_WRITES` | `0` | Allow broad writes: cart, favorites, lists, selections, checkout options, cancellations and existing-order payments |
 | `OZON_ENABLE_ORDERS` | `0` | Allow `place_order` — spends money |
 | `OZON_MONITOR_STORE` | `/data/price_history.json` | Favorites price-history file |
 | `OZON_REQUEST_TIMEOUT` | `30` | Seconds for one HTTP call |

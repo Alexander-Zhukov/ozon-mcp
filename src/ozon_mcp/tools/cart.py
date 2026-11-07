@@ -26,7 +26,7 @@ async def set_cart_quantity(
     sku: Sku,
     quantity: Annotated[int, Field(ge=0, le=999, description="Desired quantity in the cart; 0 removes the item.")],
 ) -> WriteResult:
-    """[GATED by writes_enabled] Set how many of a product are in the cart.
+    """[GATED by cart_enabled] Set how many of a product are in the cart.
     Adding, changing and removing are all this one call: quantity=0 removes.
     Ozon reports nothing about the outcome, so the cart is read back: `ok=false`
     with the reason in `detail` means the call was accepted and changed nothing
@@ -46,7 +46,7 @@ async def select_cart_items(
     ] = None,
     mode: CartSelectMode = "only",
 ) -> Cart:
-    """[GATED by writes_enabled] Choose which cart items make up the order.
+    """[GATED by cart_enabled] Choose which cart items make up the order.
     This is the step that composes a checkout: get_checkout() reports nothing
     orderable until something is ticked, and it orders exactly what is ticked —
     so "buy these two" is mode="only" with those two skus, whatever else the
